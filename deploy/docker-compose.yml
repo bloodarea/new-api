@@ -1,9 +1,14 @@
 # Deploy stack for new-api, built locally from upstream + patches/.
 # Secrets come from ../.env (see .env.example); nothing sensitive lives here.
+#
+# PREREQUISITE: the image below is NOT pulled from a registry and there is no
+# `build:` section. It must already exist on this host, produced by ../build.sh
+# (or loaded from `docker save`). `docker compose up` on a host without it fails
+# with "pull access denied for new-api-local". See README_ZH.md.
 
 services:
   new-api:
-    # Built by ../build.sh (compiles on the HDD, packages a tiny image).
+    # Prebuilt by ../build.sh. Not on Docker Hub — nothing to pull.
     image: new-api-local:local
     container_name: new-api
     restart: always

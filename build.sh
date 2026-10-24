@@ -24,16 +24,44 @@ IMAGE="${IMAGE:-new-api-local:local}"
 UPSTREAM_TAG="${UPSTREAM_TAG:-v1.0.0-rc.41}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/QuantumNous/new-api.git}"
 
-# --- toolchains + caches kept next to the repo, not in $HOME ---
-export PATH="$ROOT/toolchains/go/bin:$ROOT/toolchains/bun/bin:$PATH"
+# --- toolchains ---
+# Go and Bun are looked up independently, in this order:
+#   1. $GO_BIN_DIR / $BUN_BIN_DIR, if set
+#   2. <repo>/toolchains/go/bin and <repo>/toolchains/bun/bin
+#   3. whatever `go` / `bun` is already on PATH
+# On this host they live apart (go under /mnt/software/toolchains, bun under
+# /mnt/software/bun), so e.g.:
+#   GO_BIN_DIR=/mnt/software/toolchains/go/bin BUN_BIN_DIR=/mnt/software/bun/bin ./build.sh
+for d in "${GO_BIN_DIR:-$ROOT/toolchains/go/bin}" "${BUN_BIN_DIR:-$ROOT/toolchains/bun/bin}"; do
+  [ -d "$d" ] && PATH="$d:$PATH"
+done
+export PATH
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "!!! $1 not found." >&2
+    echo "!!! Install it, or point GO_BIN_DIR / BUN_BIN_DIR at the bin dirs." >&2
+    exit 1
+  }
+}
+need git
+need go
+need bun
+need docker
+
+# --- caches kept next to the repo, not in $HOME ---
 export GOPATH="$CACHE/gopath"
 export GOMODCACHE="$CACHE/gopath/pkg/mod"
 export GOCACHE="$CACHE/gocache"
 export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 export GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64
-export BUN_INSTALL="$ROOT/toolchains/bun"
+export BUN_INSTALL="${BUN_INSTALL:-$(dirname "$(dirname "$(command -v bun)")")}"
 export BUN_INSTALL_CACHE_DIR="$CACHE/bun-cache"
 export DISABLE_ESLINT_PLUGIN=true
+
+# Report what we resolved, so a build log always says which toolchain ran.
+echo "==> toolchain: $(go version)"
+echo "==> toolchain: bun $(bun --version)"
 
 # --- 1/4: upstream checkout at the tracked tag ---
 if [ ! -d "$SRC/.git" ]; then
@@ -75,6 +103,9 @@ go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VER'
 echo "==> [4/4] runtime image ($IMAGE)"
 mkdir -p "$OUT/licenses"
 cp "$SRC/LICENSE" "$SRC/NOTICE" "$SRC/THIRD-PARTY-LICENSES.md" "$OUT/licenses/"
+# The runtime Dockerfile lives in deploy/ but its build context is runtime/
+# (the binary + licenses). Keep the two apart so the binary is never committed.
+cp "$ROOT/deploy/Dockerfile" "$OUT/Dockerfile"
 docker build -t "$IMAGE" "$OUT"
 
 echo "==> done: $IMAGE ($VER)"
