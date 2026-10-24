@@ -1,0 +1,635 @@
+diff --git a/controller/channel.go b/controller/channel.go
+index 37e5e1f..178097e 100644
+--- a/controller/channel.go
++++ b/controller/channel.go
+@@ -5,7 +5,10 @@ import (
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
++	"io"
+ 	"net/http"
++	"net/url"
++	"regexp"
+ 	"slices"
+ 	"strconv"
+ 	"strings"
+@@ -348,6 +351,139 @@ func FetchUpstreamModels(c *gin.Context) {
+ 	})
+ }
+ 
++var (
++	iconLinkTagRe = regexp.MustCompile(`(?is)<link\b[^>]*>`)
++	iconRelRe     = regexp.MustCompile(`(?is)\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
++	iconHrefRe    = regexp.MustCompile(`(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
++	iconExtRe     = regexp.MustCompile(`(?i)\.(ico|png|jpe?g|gif|svg|webp|avif)$`)
++)
++
++// matchAttr returns the first non-empty capture group of re against tag, which
++// covers quoted, single-quoted and unquoted attribute values.
++func matchAttr(re *regexp.Regexp, tag string) string {
++	m := re.FindStringSubmatch(tag)
++	if m == nil {
++		return ""
++	}
++	for i := 1; i < len(m); i++ {
++		if m[i] != "" {
++			return m[i]
++		}
++	}
++	return ""
++}
++
++// FetchChannelIcon resolves the dashboard icon for a channel. It accepts either
++// a direct image URL or a website URL; for a website it parses the HTML for a
++// <link rel="...icon..."> and falls back to <origin>/favicon.ico. The response
++// data is {"icon_url": "..."} so the frontend stores an absolute image URL.
++func FetchChannelIcon(c *gin.Context) {
++	rawURL := strings.TrimSpace(c.Query("url"))
++	if rawURL == "" {
++		c.JSON(http.StatusOK, gin.H{"success": false, "message": "url is required"})
++		return
++	}
++	if !strings.Contains(rawURL, "://") {
++		rawURL = "https://" + rawURL
++	}
++	parsed, err := url.Parse(rawURL)
++	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
++		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid url"})
++		return
++	}
++
++	iconURL, err := resolveSiteIcon(parsed.String())
++	if err != nil {
++		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"icon_url": iconURL}})
++}
++
++func resolveSiteIcon(pageURL string) (string, error) {
++	parsed, err := url.Parse(pageURL)
++	if err != nil {
++		return "", fmt.Errorf("invalid url")
++	}
++	// A direct image URL is used as-is.
++	if iconExtRe.MatchString(parsed.Path) {
++		return pageURL, nil
++	}
++
++	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
++	defer cancel()
++
++	client := service.GetSSRFProtectedHTTPClient()
++	if client == nil {
++		client = http.DefaultClient
++	}
++	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
++	if err != nil {
++		return "", fmt.Errorf("invalid request")
++	}
++	req.Header.Set("Accept", "text/html,application/xhtml+xml")
++	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; NewAPI-IconFetcher/1.0)")
++
++	resp, err := client.Do(req)
++	if err != nil {
++		return "", fmt.Errorf("fetch failed: %v", err)
++	}
++	defer resp.Body.Close()
++
++	finalURL := pageURL
++	if resp.Request != nil && resp.Request.URL != nil {
++		finalURL = resp.Request.URL.String()
++	}
++
++	if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "image/") {
++		return finalURL, nil
++	}
++
++	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
++	if err != nil {
++		return "", fmt.Errorf("read failed: %v", err)
++	}
++
++	base, err := url.Parse(finalURL)
++	if err != nil {
++		return "", fmt.Errorf("invalid url")
++	}
++
++	if icon := parseIconFromHTML(string(body), base); icon != "" {
++		return icon, nil
++	}
++	return base.Scheme + "://" + base.Host + "/favicon.ico", nil
++}
++
++// parseIconFromHTML returns the best <link rel="...icon..."> href resolved
++// against base, preferring a regular icon over an apple-touch-icon. It returns
++// "" when the HTML declares no usable icon.
++func parseIconFromHTML(html string, base *url.URL) string {
++	apple := ""
++	for _, tag := range iconLinkTagRe.FindAllString(html, -1) {
++		rel := strings.ToLower(matchAttr(iconRelRe, tag))
++		if !strings.Contains(rel, "icon") {
++			continue
++		}
++		href := strings.TrimSpace(matchAttr(iconHrefRe, tag))
++		if href == "" {
++			continue
++		}
++		resolved, err := base.Parse(href)
++		if err != nil {
++			continue
++		}
++		if strings.Contains(rel, "apple") {
++			if apple == "" {
++				apple = resolved.String()
++			}
++			continue
++		}
++		return resolved.String()
++	}
++	return apple
++}
++
+ func FixChannelsAbilities(c *gin.Context) {
+ 	success, fails, err := model.FixAbility()
+ 	if err != nil {
+diff --git a/controller/channel_icon_test.go b/controller/channel_icon_test.go
+new file mode 100644
+index 0000000..70bbb67
+--- /dev/null
++++ b/controller/channel_icon_test.go
+@@ -0,0 +1,57 @@
++package controller
++
++import (
++	"net/url"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestParseIconFromHTML(t *testing.T) {
++	base, err := url.Parse("https://example.com/some/page")
++	require.NoError(t, err)
++
++	cases := []struct {
++		name string
++		html string
++		want string
++	}{
++		{
++			name: "relative icon href is resolved",
++			html: `<html><head><link rel="icon" href="/static/favicon.png"></head></html>`,
++			want: "https://example.com/static/favicon.png",
++		},
++		{
++			name: "href before rel still matches",
++			html: `<link href="favicon.ico" rel="shortcut icon">`,
++			want: "https://example.com/some/favicon.ico",
++		},
++		{
++			name: "protocol relative href keeps page scheme",
++			html: `<link rel="icon" href="//cdn.example.com/i.ico">`,
++			want: "https://cdn.example.com/i.ico",
++		},
++		{
++			name: "apple touch icon used when no regular icon",
++			html: `<link rel="apple-touch-icon" href="/apple.png">`,
++			want: "https://example.com/apple.png",
++		},
++		{
++			name: "regular icon wins over apple touch icon",
++			html: `<link rel="apple-touch-icon" href="/apple.png"><link rel="icon" href="/icon.svg">`,
++			want: "https://example.com/icon.svg",
++		},
++		{
++			name: "no icon link returns empty",
++			html: `<html><head><title>x</title></head></html>`,
++			want: "",
++		},
++	}
++
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			assert.Equal(t, tc.want, parseIconFromHTML(tc.html, base))
++		})
++	}
++}
+diff --git a/relaykit/dto/channel_settings.go b/relaykit/dto/channel_settings.go
+index 68a87be..b4ab7e0 100644
+--- a/relaykit/dto/channel_settings.go
++++ b/relaykit/dto/channel_settings.go
+@@ -32,6 +32,14 @@ type ChannelSettings struct {
+ 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
+ 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
+ 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
++	// SiteURL is the channel's public website, shown as a clickable link in the
++	// dashboard channel list.
++	SiteURL string `json:"site_url,omitempty"`
++	// IconURL is an optional custom icon shown for this channel in the
++	// dashboard, replacing the default channel-type logo. It is normally the
++	// favicon resolved from SiteURL via the fetch-icon endpoint, but a direct
++	// image URL works too.
++	IconURL string `json:"icon_url,omitempty"`
+ }
+ 
+ // BindsTaskPlugin reports whether the channel is bound to the task plugin,
+diff --git a/router/channel-router.go b/router/channel-router.go
+index 560f527..c3dd10b 100644
+--- a/router/channel-router.go
++++ b/router/channel-router.go
+@@ -78,6 +78,7 @@ var channelPermissionRoutes = []permissionRoute{
+ 	{method: http.MethodPost, path: "/batch", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteChannelBatch},
+ 	{method: http.MethodPost, path: "/fix", permission: authz.ChannelOperate, handler: controller.FixChannelsAbilities},
+ 	{method: http.MethodGet, path: "/fetch_models/:id", permission: authz.ChannelOperate, handler: controller.FetchUpstreamModels},
++	{method: http.MethodGet, path: "/fetch_icon", permission: authz.ChannelOperate, handler: controller.FetchChannelIcon},
+ 	{method: http.MethodGet, path: "/:id/vllm/status", permission: authz.ChannelRead, handler: controller.GetVLLMChannelStatus},
+ 	{method: http.MethodGet, path: "/:id/sglang/status", permission: authz.ChannelRead, handler: controller.GetSGLangChannelStatus},
+ 	{method: http.MethodPost, path: "/fetch_models", permission: authz.ChannelSensitiveWrite, handler: controller.FetchModels},
+diff --git a/web/src/features/channels/api.ts b/web/src/features/channels/api.ts
+index 463a216..3a08135 100644
+--- a/web/src/features/channels/api.ts
++++ b/web/src/features/channels/api.ts
+@@ -164,6 +164,22 @@ export async function getChannelDefaultBaseURLs(): Promise<
+   return requireServerSuccess(response.data).data
+ }
+ 
++/**
++ * Resolve the icon (favicon) for a channel from a website or direct image URL.
++ */
++export async function fetchChannelIcon(url: string): Promise<{
++  success: boolean
++  message?: string
++  data?: { icon_url: string }
++}> {
++  const response = await api.get<{
++    success: boolean
++    message?: string
++    data?: { icon_url: string }
++  }>('/api/channel/fetch_icon', { params: { url } })
++  return response.data
++}
++
+ /**
+  * Create new channel(s)
+  * Supports single, batch, and multi-key modes
+diff --git a/web/src/features/channels/components/channels-columns.tsx b/web/src/features/channels/components/channels-columns.tsx
+index 5595a78..63dde06 100644
+--- a/web/src/features/channels/components/channels-columns.tsx
++++ b/web/src/features/channels/components/channels-columns.tsx
+@@ -23,6 +23,7 @@ import {
+   AlertTriangle,
+   ChevronDown,
+   ChevronRight,
++  ExternalLink,
+   ListOrdered,
+   Shuffle,
+   SlidersHorizontal,
+@@ -724,6 +725,7 @@ export function useChannelsColumns(
+ 
+           // Regular channel row
+           const settings = parseChannelSettings(channel.setting)
++          const siteUrl = settings.site_url?.trim() || ''
+           const isPassThrough = settings.pass_through_body_enabled === true
+           const hasParamOverride = Boolean(channel.param_override?.trim())
+ 
+@@ -767,6 +769,18 @@ export function useChannelsColumns(
+                     </TooltipProvider>
+                   )}
+                   <UpstreamUpdateTags channel={channel} />
++                  {siteUrl && (
++                    <a
++                      href={siteUrl}
++                      target='_blank'
++                      rel='noreferrer'
++                      title={siteUrl}
++                      className='text-muted-foreground hover:text-primary shrink-0'
++                      onClick={(e) => e.stopPropagation()}
++                    >
++                      <ExternalLink className='h-3.5 w-3.5' />
++                    </a>
++                  )}
+                 </div>
+                 {channel.remark && (
+                   <TooltipProvider delay={200}>
+@@ -816,6 +830,8 @@ export function useChannelsColumns(
+           const typeName = t(typeNameKey)
+           const iconName = getChannelTypeIcon(type)
+           const channel = row.original as Channel
++          const customIconUrl =
++            parseChannelSettings(channel.setting)?.icon_url?.trim() || ''
+           const isMultiKey = isMultiKeyChannel(channel)
+           const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
+           const MultiKeyModeIcon =
+@@ -864,15 +880,26 @@ export function useChannelsColumns(
+                         <div className='max-w-full min-w-0 overflow-hidden' />
+                       }
+                     >
+-                      <ProviderBadge
+-                        iconKey={`${iconName}.Color`}
+-                        iconSize={18}
+-                        label={typeName}
+-                        colorText={false}
+-                        copyable={false}
+-                        showDot={false}
+-                        className='max-w-full min-w-0 overflow-hidden'
+-                      />
++                      {customIconUrl ? (
++                        <div className='flex max-w-full min-w-0 items-center gap-2 overflow-hidden'>
++                          <img
++                            src={customIconUrl}
++                            alt=''
++                            className='border-border h-[18px] w-[18px] shrink-0 rounded-sm border bg-white object-contain'
++                          />
++                          <span className='truncate text-sm'>{typeName}</span>
++                        </div>
++                      ) : (
++                        <ProviderBadge
++                          iconKey={`${iconName}.Color`}
++                          iconSize={18}
++                          label={typeName}
++                          colorText={false}
++                          copyable={false}
++                          showDot={false}
++                          className='max-w-full min-w-0 overflow-hidden'
++                        />
++                      )}
+                     </TooltipTrigger>
+                     <TooltipContent side='top'>{typeName}</TooltipContent>
+                   </Tooltip>
+diff --git a/web/src/features/channels/components/drawers/channel-mutate-drawer.tsx b/web/src/features/channels/components/drawers/channel-mutate-drawer.tsx
+index 1aba7df..6c15932 100644
+--- a/web/src/features/channels/components/drawers/channel-mutate-drawer.tsx
++++ b/web/src/features/channels/components/drawers/channel-mutate-drawer.tsx
+@@ -128,6 +128,7 @@ import { cn } from '@/lib/utils'
+ import { useAuthStore } from '@/stores/auth-store'
+ 
+ import {
++  fetchChannelIcon,
+   getAllModels,
+   getChannel,
+   getChannelDefaultBaseURLs,
+@@ -1737,6 +1738,33 @@ export function ChannelMutateDrawer({
+     ]
+   )
+ 
++  const [iconFetching, setIconFetching] = useState(false)
++
++  const handleFetchChannelIcon = useCallback(async () => {
++    const source =
++      form.getValues('site_url')?.trim() ||
++      form.getValues('base_url')?.trim() ||
++      ''
++    if (!source) {
++      toast.error(t('Enter a website or Base URL first'))
++      return
++    }
++    setIconFetching(true)
++    try {
++      const res = await fetchChannelIcon(source)
++      if (!res.success || !res.data?.icon_url) {
++        toast.error(res.message || t('Failed to fetch icon'))
++        return
++      }
++      form.setValue('icon_url', res.data.icon_url, { shouldDirty: true })
++      toast.success(t('Icon fetched'))
++    } catch (error) {
++      handleServerError(error, t('Failed to fetch icon'))
++    } finally {
++      setIconFetching(false)
++    }
++  }, [form, t])
++
+   const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(
+     (errors) => {
+       const field = Object.keys(errors)[0]
+@@ -2568,6 +2596,76 @@ export function ChannelMutateDrawer({
+               </FormItem>
+             )}
+           />
++          <FormField
++            control={form.control}
++            name='site_url'
++            render={({ field }) => (
++              <FormItem>
++                <FormLabel>{t('Channel URL')}</FormLabel>
++                <div className='flex items-center gap-2'>
++                  <FormControl>
++                    <Input
++                      placeholder='https://example.com'
++                      {...field}
++                      disabled={sensitiveLocked}
++                    />
++                  </FormControl>
++                  <Button
++                    type='button'
++                    variant='outline'
++                    className='shrink-0'
++                    disabled={sensitiveLocked || iconFetching}
++                    onClick={handleFetchChannelIcon}
++                  >
++                    {iconFetching ? t('Fetching...') : t('Fetch Icon')}
++                  </Button>
++                </div>
++                <FormDescription>
++                  {t(
++                    'Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.'
++                  )}
++                </FormDescription>
++                <FormMessage />
++              </FormItem>
++            )}
++          />
++          <FormField
++            control={form.control}
++            name='icon_url'
++            render={({ field }) => (
++              <FormItem>
++                <FormLabel>{t('Channel Icon')}</FormLabel>
++                <div className='flex items-center gap-2'>
++                  {field.value ? (
++                    <img
++                      src={field.value}
++                      alt=''
++                      className='border-border h-9 w-9 shrink-0 rounded-md border bg-white object-contain p-0.5'
++                      onError={(e) => {
++                        e.currentTarget.style.visibility = 'hidden'
++                      }}
++                      onLoad={(e) => {
++                        e.currentTarget.style.visibility = 'visible'
++                      }}
++                    />
++                  ) : null}
++                  <FormControl>
++                    <Input
++                      placeholder='https://example.com/favicon.ico'
++                      {...field}
++                      disabled={sensitiveLocked}
++                    />
++                  </FormControl>
++                </div>
++                <FormDescription>
++                  {t(
++                    'Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.'
++                  )}
++                </FormDescription>
++                <FormMessage />
++              </FormItem>
++            )}
++          />
+         </div>
+ 
+         {!isEditing && (
+diff --git a/web/src/features/channels/lib/channel-form.ts b/web/src/features/channels/lib/channel-form.ts
+index cc7c2f3..621118b 100644
+--- a/web/src/features/channels/lib/channel-form.ts
++++ b/web/src/features/channels/lib/channel-form.ts
+@@ -263,6 +263,8 @@ export const channelFormSchema = z
+     // Channel extra settings (stored in setting JSON, not sent directly)
+     force_format: z.boolean().optional(),
+     thinking_to_content: z.boolean().optional(),
++    site_url: z.string().optional(),
++    icon_url: z.string().optional(),
+     proxy: z
+       .string()
+       .optional()
+@@ -457,6 +459,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
+   // Channel extra settings
+   force_format: false,
+   thinking_to_content: false,
++  site_url: '',
++  icon_url: '',
+   proxy: '',
+   http_protocol: HTTP_PROTOCOL_AUTO,
+   http2_connection_shards: 1,
+@@ -501,6 +505,8 @@ export function transformChannelToFormDefaults(
+     task_extend_plugin_keys: [] as string[],
+     force_format: false,
+     thinking_to_content: false,
++    site_url: '',
++    icon_url: '',
+     proxy: '',
+     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
+     http2_connection_shards: 1,
+@@ -522,6 +528,8 @@ export function transformChannelToFormDefaults(
+         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
+         force_format: parsed.force_format || false,
+         thinking_to_content: parsed.thinking_to_content || false,
++        site_url: parsed.site_url || '',
++        icon_url: parsed.icon_url || '',
+         proxy: parsed.proxy || '',
+         http_protocol: protocol,
+         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
+@@ -655,6 +663,8 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
+         : undefined,
+     force_format: formData.force_format || false,
+     thinking_to_content: formData.thinking_to_content || false,
++    site_url: formData.site_url?.trim() || undefined,
++    icon_url: formData.icon_url?.trim() || undefined,
+     proxy: formData.proxy?.trim() || '',
+     pass_through_body_enabled:
+       formData.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
+diff --git a/web/src/features/channels/types.ts b/web/src/features/channels/types.ts
+index f87a1ac..3054224 100644
+--- a/web/src/features/channels/types.ts
++++ b/web/src/features/channels/types.ts
+@@ -84,6 +84,11 @@ export interface ChannelSettings {
+   task_extend_plugin_keys?: string[]
+   force_format?: boolean
+   thinking_to_content?: boolean
++  // Channel website, shown as a clickable link in the channel list.
++  site_url?: string
++  // Optional custom icon (image URL) shown for this channel instead of the
++  // default channel-type logo. Normally the favicon resolved from site_url.
++  icon_url?: string
+   proxy?: string
+   pass_through_body_enabled?: boolean
+   responses_websocket_enabled?: boolean
+diff --git a/web/src/i18n/locales/en.json b/web/src/i18n/locales/en.json
+index 2ced2b8..99894c1 100644
+--- a/web/src/i18n/locales/en.json
++++ b/web/src/i18n/locales/en.json
+@@ -2653,7 +2653,7 @@
+     "footer.columns.related.links.oneApi": "One API",
+     "footer.columns.related.title": "Related Projects",
+     "footer.defaultCopyright": "All rights reserved.",
+-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
++    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
+     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
+     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
+@@ -6853,6 +6853,14 @@
+     "Zhipu": "Zhipu",
+     "Zhipu GLM": "Zhipu GLM",
+     "Zhipu V4": "Zhipu V4",
+-    "Zoom": "Zoom"
++    "Zoom": "Zoom",
++    "Channel URL": "Channel URL",
++    "Channel Icon": "Channel Icon",
++    "Fetch Icon": "Fetch Icon",
++    "Enter a website or Base URL first": "Enter a website or Base URL first",
++    "Failed to fetch icon": "Failed to fetch icon",
++    "Icon fetched": "Icon fetched",
++    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.",
++    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon."
+   }
+ }
+diff --git a/web/src/i18n/locales/zh-TW.json b/web/src/i18n/locales/zh-TW.json
+index 55aae93..ed350ee 100644
+--- a/web/src/i18n/locales/zh-TW.json
++++ b/web/src/i18n/locales/zh-TW.json
+@@ -2653,7 +2653,7 @@
+     "footer.columns.related.links.oneApi": "One API",
+     "footer.columns.related.title": "相關項目",
+     "footer.defaultCopyright": "版權所有。",
+-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
++    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
+     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
+     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
+@@ -6853,6 +6853,14 @@
+     "Zhipu": "智譜",
+     "Zhipu GLM": "智譜GLM",
+     "Zhipu V4": "智譜 V4",
+-    "Zoom": "縮放"
++    "Zoom": "縮放",
++    "Channel URL": "頻道網址",
++    "Channel Icon": "頻道圖示",
++    "Fetch Icon": "取得圖示",
++    "Enter a website or Base URL first": "請先填寫頻道網址或 Base URL",
++    "Failed to fetch icon": "取得圖示失敗",
++    "Icon fetched": "已取得圖示",
++    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "頻道網址，會顯示為可點擊的連結；下方圖示即從此網址取得。",
++    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "清單中顯示的頻道圖示圖片網址。點「取得圖示」會自動填入，也可直接貼上任意圖片網址；留空則使用預設類型圖示。"
+   }
+ }
+diff --git a/web/src/i18n/locales/zh.json b/web/src/i18n/locales/zh.json
+index 11608e4..265eb99 100644
+--- a/web/src/i18n/locales/zh.json
++++ b/web/src/i18n/locales/zh.json
+@@ -2653,7 +2653,7 @@
+     "footer.columns.related.links.oneApi": "One API",
+     "footer.columns.related.title": "相关项目",
+     "footer.defaultCopyright": "版权所有。",
+-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
++    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高级自定义渠道仅对 /v1/responses 且不做协议转换的路由生效。",
+     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
+     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
+@@ -6853,6 +6853,14 @@
+     "Zhipu": "智谱",
+     "Zhipu GLM": "智谱GLM",
+     "Zhipu V4": "智谱 V4",
+-    "Zoom": "缩放"
++    "Zoom": "缩放",
++    "Channel URL": "渠道网址",
++    "Channel Icon": "渠道图标",
++    "Fetch Icon": "获取图标",
++    "Enter a website or Base URL first": "请先填写渠道网址或 Base URL",
++    "Failed to fetch icon": "获取图标失败",
++    "Icon fetched": "图标已获取",
++    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "渠道网址，会在渠道列表中显示为可点击的链接；下方图标即从该网址获取。",
++    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "列表中显示的渠道图标图片地址。点击「获取图标」会自动填入，也可直接粘贴任意图片地址；留空则使用默认类型图标。"
+   }
+ }

@@ -1,0 +1,39 @@
+# ===== new-api-deploy ignore rules =====
+# Nothing secret, no runtime data, no build output ever enters this repo.
+
+# --- secrets ---
+.env
+.env.*
+!.env.example
+
+# --- upstream checkout + build output (recreated by build.sh) ---
+/src/
+/runtime/
+/cache/
+/toolchains/
+
+# --- runtime data ---
+/deploy/data/
+/deploy/logs/
+/data/
+/logs/
+
+# --- database dumps and backups (contain tokens, user hashes, channel keys) ---
+*.sql
+*.dump
+*.bak
+/backups/
+
+# --- dependencies and artifacts ---
+node_modules/
+dist/
+build/
+*.exe
+*.bin
+*.test
+
+# --- editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

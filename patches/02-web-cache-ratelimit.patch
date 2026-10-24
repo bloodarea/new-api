@@ -1,0 +1,63 @@
+diff --git a/middleware/cache.go b/middleware/cache.go
+index 1a9dff8..9267eb6 100644
+--- a/middleware/cache.go
++++ b/middleware/cache.go
+@@ -1,15 +1,27 @@
+ package middleware
+ 
+ import (
++	"strings"
++
+ 	"github.com/gin-gonic/gin"
+ )
+ 
++// hashedStaticAsset reports whether the request targets a content-hashed build
++// asset (served under /static/). Those may be cached aggressively because their
++// filename changes whenever their content does. Everything else — the SPA
++// index.html and any route that falls back to it — must never be cached, or a
++// browser keeps loading stale HTML that points at the previous build's chunks.
++func hashedStaticAsset(requestURI string) bool {
++	return strings.HasPrefix(requestURI, "/static/")
++}
++
+ func Cache() func(c *gin.Context) {
+ 	return func(c *gin.Context) {
+-		if c.Request.RequestURI == "/" {
+-			c.Header("Cache-Control", "no-cache")
+-		} else {
++		if hashedStaticAsset(c.Request.RequestURI) {
+ 			c.Header("Cache-Control", "max-age=604800") // one week
++		} else {
++			c.Header("Cache-Control", "no-store")
++			c.Header("Pragma", "no-cache")
+ 		}
+ 		c.Header("Cache-Version", "b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14")
+ 		c.Next()
+diff --git a/router/web-router.go b/router/web-router.go
+index 7f814da..4032b32 100644
+--- a/router/web-router.go
++++ b/router/web-router.go
+@@ -27,15 +27,21 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
+ 		middleware.RouteTag("web"),
+ 		gzip.Gzip(gzip.DefaultCompression),
+ 		middleware.AccessTokenAudit(),
+-		middleware.GlobalWebRateLimit(),
+ 		middleware.Cache(),
++		// Serve content-hashed build assets BEFORE the web rate limiter: a single
++		// dashboard load requests dozens of chunks, and counting them against the
++		// per-IP budget makes a normal reload trip 429/ChunkLoadError. static.Serve
++		// ends the request for a real file and falls through to the limiter + SPA
++		// fallback only for non-asset paths.
+ 		static.Serve("/", frontendFS),
++		middleware.GlobalWebRateLimit(),
+ 		func(c *gin.Context) {
+ 			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+ 				controller.RelayNotFound(c)
+ 				return
+ 			}
+-			c.Header("Cache-Control", "no-cache")
++			c.Header("Cache-Control", "no-store")
++			c.Header("Pragma", "no-cache")
+ 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
+ 		},
+ 	)
