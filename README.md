@@ -47,6 +47,10 @@ Three ways to get it there:
 
 The run host needs only Docker — no Go, no Bun.
 
+This repo describes **how to build and how to run**. It makes no claim about
+which machine is which environment; that belongs in the deployment operator's
+own records, not here.
+
 ```sh
 docker image inspect new-api-local:local >/dev/null 2>&1 \
   && echo "ready" || echo "missing: run build.sh or docker load"

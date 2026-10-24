@@ -94,7 +94,9 @@ Error response from daemon: failed to resolve reference
 | **从别处导入** | 构建机与运行机分离 | `docker save new-api-local:local \| gzip > img.tgz` → 目标机 `gunzip -c img.tgz \| docker load` |
 | **私有 registry** | 多机共享 | `docker tag` + `docker push`，然后改 compose 的 `image:` |
 
-> **本项目的实际部署形态**：构建在一台机器上做（内存要够），运行机只 `docker load` 或从 registry 拉。运行机不需要 Go、Bun，只要有 Docker。
+> **本项目的实际部署形态**：构建机与运行机分离。构建在一台有 Go/Bun 的机器上做（内存要够），运行机只 `docker load` 或从 registry 拉。运行机不需要 Go、Bun，只要有 Docker。
+>
+> 这个仓库只描述**怎么构建、怎么运行**，不声明任何一台机器属于哪种环境。哪台机器跑什么，由部署方自己决定并记录在部署方自己的文档里。
 
 ### 检查镜像是否存在
 
@@ -301,7 +303,7 @@ HTTP_PROXY_URL=
 
 基线：**v1.0.0-rc.41**（上游 commit `2035a82`）
 
-三个补丁，共 776 行 diff，涉及 16 个文件。**按顺序应用后，结果与生产环境运行的代码逐字节一致**（已用 `diff -r` 验证，差异为 0）。
+三个补丁，共 776 行 diff，涉及 16 个文件。**按顺序应用后，结果与本仓库维护的那份运行代码逐字节一致**（已用 `diff -r` 验证，差异为 0）。
 
 ### 补丁 1：`01-channel-site-icon.patch` — 渠道站点与图标
 
