@@ -38,7 +38,7 @@ Everything lives in this one fork:
 
 ## Build
 
-**GitHub Actions (normal path).** Actions → *Build patched image* → Run
+**GitHub Actions (the default).** Actions → *Build patched image* → Run
 workflow, with the defaults. It builds the frontend (Bun 1.4.0) and backend
 (Go 1.26.1), packages the runtime image and pushes it:
 
@@ -51,10 +51,33 @@ The bare binary is uploaded as an artifact (14 days). No secret is needed — th
 workflow pushes with its own `GITHUB_TOKEN`. The package is public, so the run
 host can pull without logging in.
 
-**Local build (fallback).** `./build.sh` does the same thing on one machine and
-tags the image `new-api-local:local`; it needs Git, Go, Bun and Docker. Toolchains
-are looked up in `$GO_BIN_DIR` / `$BUN_BIN_DIR`, then `toolchains/`, then `PATH`.
-Caches go to `cache/`, never `$HOME`.
+### Do not build locally
+
+Local builds are **disabled by default**. A frontend build plus `go build` pins
+every core and peaks at several GB of RAM; run on a host that is also serving
+traffic, that has frozen one of our machines. Use GitHub Actions — it is free
+here and takes about 2.5 minutes.
+
+`build.sh` refuses to start unless you pass `ALLOW_LOCAL_BUILD=1`, and even then
+it aborts when the machine is below these minimums:
+
+| Resource | Minimum | Why |
+|---|---|---|
+| CPU | 4 cores (8 recommended) | the Bun build and the Go build both parallelise |
+| RAM | 8 GB available (16 GB total) | `go build` peaks at several GB; below this the host swaps and stalls |
+| Disk | 20 GB free | node_modules ~1.5 GB, Go module cache ~3 GB, build cache ~2 GB, image ~1 GB |
+| Host | a development machine | never a host that runs the stack |
+| Tools | Go 1.26.x, Bun 1.4.0, Docker | the versions CI uses |
+
+If a local build is genuinely needed and the machine meets all of that:
+
+```sh
+ALLOW_LOCAL_BUILD=1 ./build.sh       # aborts if RAM or disk are short
+ALLOW_LOCAL_BUILD=force ./build.sh   # skips the resource check
+```
+
+Toolchains are looked up in `$GO_BIN_DIR` / `$BUN_BIN_DIR`, then `toolchains/`,
+then `PATH`. Caches go to `cache/`, never `$HOME`.
 
 ## Deploy
 

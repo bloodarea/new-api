@@ -11,7 +11,12 @@
 #   <repo>/runtime/              build output (NOT in git)
 #   <repo>/cache/                toolchain caches (NOT in git)
 #
-# Usage:  ./build.sh   then   cd deploy && docker compose up -d
+# Local builds are disabled by default: the Bun + Go build saturates the machine
+# and has frozen a production host. Use GitHub Actions (see README). If this is
+# a development box and you really need a local build:
+#
+#   ALLOW_LOCAL_BUILD=1 ./build.sh      # checks RAM/disk first
+#   ALLOW_LOCAL_BUILD=force ./build.sh  # skips the resource check
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -23,6 +28,40 @@ IMAGE="${IMAGE:-new-api-local:local}"
 # Upstream version this repo tracks. Must match patches/ base.
 UPSTREAM_TAG="${UPSTREAM_TAG:-v1.0.0-rc.41}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/QuantumNous/new-api.git}"
+
+# --- local build gate ---
+# GitHub Actions is the default build path. A local build needs explicit
+# consent, and enough headroom that it cannot starve a host that serves traffic.
+ALLOW_LOCAL_BUILD="${ALLOW_LOCAL_BUILD:-0}"
+if [ "$ALLOW_LOCAL_BUILD" = "0" ]; then
+  cat >&2 <<'EOF'
+!!! Local build is disabled by default.
+!!! Use GitHub Actions: Actions -> Build patched image -> Run workflow.
+!!! This build pins every core and peaks at several GB of RAM; on a host that
+!!! also serves traffic it has frozen the machine before.
+!!! If this is a development box and you really need it:
+!!!     ALLOW_LOCAL_BUILD=1 ./build.sh
+EOF
+  exit 1
+fi
+
+if [ "$ALLOW_LOCAL_BUILD" != "force" ]; then
+  mem_avail_gb=0
+  if [ -r /proc/meminfo ]; then
+    mem_avail_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+    mem_avail_gb=$(( mem_avail_kb / 1024 / 1024 ))
+  fi
+  disk_avail_gb=$(df -Pk "$ROOT" | awk 'NR==2 {print int($4 / 1024 / 1024)}')
+  if [ "$mem_avail_gb" -lt 8 ] || [ "$disk_avail_gb" -lt 20 ]; then
+    echo "!!! Not enough headroom for a local build:" >&2
+    echo "!!!   RAM available: ${mem_avail_gb} GB (need 8)" >&2
+    echo "!!!   disk free:     ${disk_avail_gb} GB (need 20)" >&2
+    echo "!!! Build with GitHub Actions instead, or move to a bigger machine," >&2
+    echo "!!! or accept the risk with ALLOW_LOCAL_BUILD=force." >&2
+    exit 1
+  fi
+  echo "==> local build allowed: ${mem_avail_gb} GB RAM, ${disk_avail_gb} GB disk free"
+fi
 
 # --- toolchains ---
 # Go and Bun are looked up independently, in this order:

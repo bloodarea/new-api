@@ -43,7 +43,28 @@ ghcr.io/bloodarea/new-api:latest
 
 裸二进制另外作为 artifact 上传（保留 14 天）。不需要配 secret——workflow 用自带的 `GITHUB_TOKEN` 推送；包是 public，运行机免登录就能拉。
 
-**本地构建（备选）**：`./build.sh` 在同一台机器上做同样的事，产出镜像名 `new-api-local:local`，需要 Git、Go、Bun、Docker。工具链查找顺序是 `$GO_BIN_DIR` / `$BUN_BIN_DIR` → `toolchains/` → `PATH`；缓存都落在 `cache/`，不写 `$HOME`。
+### 不要本地构建
+
+本地构建**默认禁止**。前端构建加 `go build` 会把所有核跑满、内存峰值好几 GB；在同时对外服务的机器上跑，我们有一台服务器就是这么被卡死的。构建请走 GitHub Actions——这个仓库免费，一次约 2.5 分钟。
+
+`build.sh` 现在必须显式传 `ALLOW_LOCAL_BUILD=1` 才会启动；即使传了，机器低于下面的配置也会直接退出：
+
+| 资源 | 最低要求 | 原因 |
+|---|---|---|
+| CPU | 4 核（建议 8 核） | Bun 构建和 Go 编译都会并行吃满 |
+| 内存 | 可用 8 GB（总量 16 GB） | `go build` 峰值好几 GB，低于这个会 swap、卡顿 |
+| 磁盘 | 空闲 20 GB | node_modules 约 1.5 GB、Go 模块缓存约 3 GB、编译缓存约 2 GB、镜像约 1 GB |
+| 机器 | 开发机 | **绝不能**是跑着这套服务的机器 |
+| 工具链 | Go 1.26.x、Bun 1.4.0、Docker | 与 CI 一致 |
+
+确实需要本机构建、且机器满足以上条件时才执行：
+
+```sh
+ALLOW_LOCAL_BUILD=1 ./build.sh       # 内存/磁盘不够会直接退出
+ALLOW_LOCAL_BUILD=force ./build.sh   # 跳过资源检查
+```
+
+工具链查找顺序是 `$GO_BIN_DIR` / `$BUN_BIN_DIR` → `toolchains/` → `PATH`；缓存都落在 `cache/`，不写 `$HOME`。
 
 ## 部署
 
