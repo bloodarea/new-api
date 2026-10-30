@@ -1,3 +1,8 @@
+> **Personal customized build.** This fork carries three local patches on top of
+> `v1.0.0-rc.41`. What changed, how it is built and how it is deployed: see the
+> [`deploy-tooling` branch README](https://github.com/bloodarea/new-api/blob/deploy-tooling/README.md).
+> Everything below is upstream's README, unchanged.
+
 <div align="center">
 
 ![new-api](/web/public/logo.png)
