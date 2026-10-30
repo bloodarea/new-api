@@ -4,6 +4,12 @@
 
 > English version: [README.md](README.md)
 
+> **本仓库现在放在上游的 fork 里**，分支名 `deploy-tooling`；原来独立的 Gitea 仓库已停用：
+>
+> ```sh
+> git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
+> ```
+
 **本仓库不包含上游源码。** 上游代码在构建时拉取，仓库里只放"怎么把上游变成我们要的样子"——几百 KB，而不是别人 80 MB 的提交历史。
 
 ---
@@ -202,7 +208,7 @@ GOPROXY=https://proxy.golang.org,direct ./build.sh
 
 ```sh
 # 1. 克隆本仓库
-git clone http://106.53.27.77:3000/admin/new-api-deploy.git
+git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
 cd new-api-deploy
 
 # 2. 构建（工具链按上节方式指定）

@@ -6,6 +6,13 @@ compose stack.
 
 > 中文文档见 [README_ZH.md](README_ZH.md)
 
+> **This repo now lives inside the fork of upstream**, as the `deploy-tooling`
+> branch — the standalone Gitea repository is retired:
+>
+> ```sh
+> git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
+> ```
+
 **Upstream source is not vendored here.** This repo holds only what turns
 upstream into *our* build — a few hundred KB instead of ~80 MB of someone
 else's history.
@@ -108,7 +115,7 @@ became unresponsive — don't build on a low-RAM machine.
 ## Build
 
 ```sh
-git clone http://106.53.27.77:3000/admin/new-api-deploy.git
+git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
 cd new-api-deploy
 ./build.sh
 ```
