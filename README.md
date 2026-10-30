@@ -1,239 +1,108 @@
-# new-api-deploy
+# new-api — custom build
 
-Deployment configuration for a self-hosted [new-api](https://github.com/QuantumNous/new-api)
-instance: the patches we carry on top of upstream, the build script, and the
-compose stack.
+A customized [new-api](https://github.com/QuantumNous/new-api) for a private
+instance. Upstream's [README](https://github.com/QuantumNous/new-api#readme) is
+the reference for what the product is and how it works; this branch only covers
+what we changed, how we build it, and how we run it.
+
+This is not a contribution back to upstream — it is a personal build.
 
 > 中文文档见 [README_ZH.md](README_ZH.md)
 
-> **This repo now lives inside the fork of upstream**, as the `deploy-tooling`
-> branch — the standalone Gitea repository is retired:
->
-> ```sh
-> git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
-> ```
+```sh
+git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
+```
 
-**Upstream source is not vendored here.** This repo holds only what turns
-upstream into *our* build — a few hundred KB instead of ~80 MB of someone
-else's history.
+## What's different from upstream
 
-## What's in here
+Base: `v1.0.0-rc.41` (upstream commit `2035a82`), three patches applied in
+filename order.
 
-| Path | Purpose |
+| Patch | Change |
 |---|---|
-| `patches/*.patch` | Our changes on top of upstream, applied in filename order |
-| `build.sh` | Clones upstream, applies patches, builds, packages the runtime image |
-| `deploy/docker-compose.yml` | The stack: new-api + postgres + redis |
-| `deploy/Dockerfile` | Minimal runtime image (binary + licenses only) |
-| `.env.example` | Config template — copy to `.env`, fill in secrets |
+| `01-channel-site-icon` | Channels can carry a website URL, and the dashboard fetches that site's favicon and shows it in the channel list. Adds `GET /api/channel/fetch_icon` (`ChannelOperate`), `SiteURL`/`IconURL` in channel settings (settings JSON only, no schema change), `<link rel="…icon…">` parsing with an `<origin>/favicon.ico` fallback, SSRF-protected HTTP client, plus drawer/column UI and a unit test. |
+| `02-web-cache-ratelimit` | Two dashboard fixes. **Cache**: only content-hashed `/static/*` gets a long `max-age`; `index.html` and SPA fallbacks get `no-store`, so a browser never keeps HTML pointing at a previous build's chunks. **Rate limit**: `static.Serve` runs before `GlobalWebRateLimit`, because one dashboard load pulls dozens of chunks and used to trip 429 / `ChunkLoadError` on a normal reload. |
+| `03-docker-mirror` | Build-time only: points the base images and the package managers at China mirrors (`docker.m.daocloud.io`, npmmirror, goproxy.cn) and writes `VERSION`. Does not change the produced image — CI skips it and passes `BASE_REGISTRY=` empty instead. |
 
-After a build you also get, all gitignored: `src/` (upstream checkout),
-`runtime/` (binary + licenses + Dockerfile), `cache/` (Go and Bun caches),
-`toolchains/` (optional, see below).
+CI applies `01` and `02` only; `03` exists for local builds on a China host.
 
-## Running requires a prebuilt image
+## Branches
 
-**`docker compose up` will fail unless `new-api-local:local` already exists on
-the host.** There is no `build:` section and the image is on no registry, so
-compose treats the bare name as a Docker Hub official image and tries to pull
-it (hanging on a slow network before timing out):
+Everything lives in this one fork:
 
-```
- Image new-api-local:local Pulling
- Image new-api-local:local Error failed to resolve reference
-   "docker.io/library/new-api-local:local"
-```
-
-Three ways to get it there:
-
-| Way | When | Command |
-|---|---|---|
-| Build locally | machine has the toolchain | `./build.sh` |
-| GitHub Actions | build host is short on disk/RAM | run the workflow, then `docker pull` (see below) |
-| Import | build host ≠ run host | `docker save new-api-local:local \| gzip > img.tgz`, then `gunzip -c img.tgz \| docker load` |
-| Private registry | several hosts | `docker push`, then edit `image:` in the compose file |
-
-The run host needs only Docker — no Go, no Bun.
-
-This repo describes **how to build and how to run**. It makes no claim about
-which machine is which environment; that belongs in the deployment operator's
-own records, not here.
-
-```sh
-docker image inspect new-api-local:local >/dev/null 2>&1 \
-  && echo "ready" || echo "missing: run build.sh or docker load"
-```
-
-## Toolchain
-
-Building needs four tools, **on one machine only**:
-
-| Tool | Version | Notes |
-|---|---|---|
-| Git | ≥ 2.20 | clone + apply patches |
-| Go | matching upstream `go.mod` (rc.41 says `go 1.25.1`; 1.26.1 verified) | backend |
-| Bun | **1.4.0** (pinned in upstream `Dockerfile`) | frontend |
-| Docker | ≥ 20.10 with buildkit | image packaging |
-
-Go and Bun are resolved independently, in this order:
-
-1. `$GO_BIN_DIR` / `$BUN_BIN_DIR`
-2. `<repo>/toolchains/go/bin` and `<repo>/toolchains/bun/bin`
-3. whatever is already on `PATH`
-
-They live apart on the machine this repo was developed on, so:
-
-```sh
-GO_BIN_DIR=/mnt/software/toolchains/go/bin \
-BUN_BIN_DIR=/mnt/software/bun/bin \
-./build.sh
-```
-
-Or symlink them in and run plain `./build.sh`:
-
-```sh
-mkdir -p toolchains
-ln -s /mnt/software/toolchains/go toolchains/go
-ln -s /mnt/software/bun          toolchains/bun
-```
-
-Caches land in `cache/` (`GOPATH`, `GOMODCACHE`, `GOCACHE`,
-`BUN_INSTALL_CACHE_DIR`), never in `$HOME`. `GOPROXY` defaults to
-`https://goproxy.cn,direct`; override it with the env var.
-
-**Memory:** the Go build is the heaviest step and can peak at several GB.
-
-| RAM | Advice |
+| Branch | Purpose |
 |---|---|
-| ≥ 16 GB | just `./build.sh` |
-| 8 GB | `GOMAXPROCS=2 ./build.sh` |
-| ≤ 4 GB | build elsewhere, ship the image with `docker save` |
-
-A 3.7 GB box running `go build` and `docker build` together thrashed and
-became unresponsive — don't build on a low-RAM machine.
+| `main` | Upstream mirror + `.github/workflows/build-image.yml`. GitHub only lists workflows from the default branch, so this is what gives the Actions tab its "Run workflow" button. |
+| `deploy/rc.41` | The tree CI compiles: upstream tag + `01` + `02` + `VERSION` + `deploy/Dockerfile`. Generated — do not edit by hand. |
+| `deploy-tooling` | This branch: patches, build script, compose stack, docs. |
 
 ## Build
 
-```sh
-git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
-cd new-api-deploy
-./build.sh
+**GitHub Actions (normal path).** Actions → *Build patched image* → Run
+workflow, with the defaults. It builds the frontend (Bun 1.4.0) and backend
+(Go 1.26.1), packages the runtime image and pushes it:
+
+```
+ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+ghcr.io/bloodarea/new-api:latest
 ```
 
-It will:
+The bare binary is uploaded as an artifact (14 days). No secret is needed — the
+workflow pushes with its own `GITHUB_TOKEN`. The package is public, so the run
+host can pull without logging in.
 
-1. `git clone --branch v1.0.0-rc.41 --depth 1` into `./src/` if absent
-2. apply every patch in `patches/` — already-applied ones are skipped, so the
-   script is re-runnable; a patch that no longer applies makes it **exit 1**
-   rather than build the wrong thing
-3. build the frontend (Bun) and backend (Go) into `./runtime/`
-4. `docker build` the runtime image as `new-api-local:local`
-
-Overridable: `UPSTREAM_TAG`, `UPSTREAM_URL`, `IMAGE`, `GOPROXY`,
-`GOMAXPROCS`, `GO_BIN_DIR`, `BUN_BIN_DIR`.
-
-## Building on GitHub Actions
-
-GitHub Actions only runs on GitHub repositories, and this repo lives on our
-Gitea — so the CI half lives in the fork of upstream
-(`github.com/bloodarea/new-api`), and `./fork-branch.sh` keeps it in sync with
-the patches here:
-
-| In the fork | What it is |
-|---|---|
-| `main` | Upstream mirror + `.github/workflows/build-image.yml`. GitHub only lists workflows from the default branch, so this is what gives you the "Run workflow" button. |
-| `deploy/rc.41` | The tree CI builds: upstream `v1.0.0-rc.41` + `patches/01` + `patches/02` + `VERSION` + `deploy/Dockerfile` |
-
-```sh
-FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
-```
-
-Re-run that whenever a patch changes; it resets `main` and the deploy branch in
-the clone, so point it at a clean clone of the fork. `03-docker-mirror.patch` is
-skipped on purpose (its China mirrors only add latency to a runner outside
-China), and the runtime image is built with `BASE_REGISTRY=` empty, i.e. plain
-docker.io.
-
-Setup, once per fork:
-
-1. Settings → Actions → allow workflows (forks ship with Actions disabled).
-2. Actions → **Build patched image** → Run workflow.
-
-No secret is needed: the image goes to GitHub Container Registry and the
-workflow pushes it with its own `GITHUB_TOKEN` (`packages: write`). The first
-push creates `ghcr.io/bloodarea/new-api` as a **private** package — set it to
-public in the package settings if the deploy host should pull without
-credentials.
-
-On the run host:
-
-```sh
-docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
-docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
-```
-
-The workflow also uploads the bare binary as a 14-day artifact.
+**Local build (fallback).** `./build.sh` does the same thing on one machine and
+tags the image `new-api-local:local`; it needs Git, Go, Bun and Docker. Toolchains
+are looked up in `$GO_BIN_DIR` / `$BUN_BIN_DIR`, then `toolchains/`, then `PATH`.
+Caches go to `cache/`, never `$HOME`.
 
 ## Deploy
 
 ```sh
+git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
+cd new-api-deploy
+
+docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+
 cd deploy
-cp ../.env.example ../.env    # then fill in the three secrets
+cp ../.env.example ../.env      # fill in the secrets
 docker compose --env-file ../.env up -d
 ```
 
-Generate secrets with `openssl rand -hex 32`. `SESSION_SECRET` signs session
-cookies — changing it logs everyone out.
+- Service on port `3000`; Postgres data in the `pg_data` volume, uploads in
+  `deploy/data`, logs in `deploy/logs`.
+- `SESSION_SECRET` signs session cookies — changing it logs everyone out.
+  Generate secrets with `openssl rand -hex 32`.
+- The compose file sets `HTTP_PROXY`/`HTTPS_PROXY` for the container, defaulting
+  to the host's port 7890. Set `HTTP_PROXY_URL=` empty in `.env` if the host has
+  direct internet.
 
-The service listens on `3000`. Data lives in the `pg_data` volume (Postgres)
-and `deploy/data` (uploads); logs in `deploy/logs`.
-
-The compose file sets `HTTP_PROXY`/`HTTPS_PROXY` for the new-api container,
-defaulting to the host's port 7890. Set `HTTP_PROXY_URL=` empty in `.env` (or
-drop those lines) if your host has direct internet.
-
-## Patches
-
-Base: **v1.0.0-rc.41** (upstream `2035a82`). 776 lines of diff across 16 files;
-applying all three reproduces the tree we run byte for byte.
-
-| Patch | What it changes |
-|---|---|
-| `01-channel-site-icon.patch` | Channel site/icon URL feature: a channel can carry a website URL, and the dashboard fetches and shows its favicon. Adds `GET /api/channel/fetch_icon` (permission `ChannelOperate`), `SiteURL`/`IconURL` on channel settings (settings JSON only — no schema change), HTML `<link rel="…icon…">` parsing with `<origin>/favicon.ico` fallback, SSRF-protected via `service.GetSSRFProtectedHTTPClient()`, plus the drawer/column UI, i18n in en/zh/zh-TW, and a unit test. |
-| `02-web-cache-ratelimit.patch` | Two fixes for the dashboard loading stale or broken. **Cache**: only content-hashed `/static/*` assets get a long `max-age`; everything else — `index.html` and SPA fallbacks — gets `no-store`, so a browser never keeps HTML pointing at a previous build's chunks. **Rate limit**: `static.Serve` now runs *before* `GlobalWebRateLimit`, because one dashboard load requests dozens of chunks and counting them against the per-IP budget made a normal reload trip 429 / `ChunkLoadError`. |
-| `03-docker-mirror.patch` | Points the build stages at a China-reachable mirror (`docker.m.daocloud.io`) and sets `GOPROXY`/`BUN_CONFIG_REGISTRY` to domestic mirrors. Digests are unchanged — same images, different registry prefix. Also writes `VERSION`, which upstream leaves empty at the tag. Cosmetic for anyone outside China — drop it if you build elsewhere. |
-
-They're kept separate on purpose: the mirror patch almost never conflicts, the
-cache/limiter one occasionally does, and the channel one touches an active
-upstream file, so it's the one most likely to need a rebase.
-
-## Updating upstream
+## Changing something
 
 ```sh
-cd src && git fetch --unshallow && git checkout v1.0.0-rc.XX
+# 1. edit patches/*.patch in this branch
+# 2. regenerate the branch CI builds (and the workflow on main)
+FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
+# 3. Actions -> Build patched image -> Run workflow
 ```
 
-Then in this repo:
+`fork-branch.sh` resets `main` and `deploy/rc.41` in the clone it points at, so
+give it a clean clone of the fork.
 
-```sh
-for p in patches/*.patch; do git -C src apply --check "$p" || echo "CONFLICT: $p"; done
-```
+Upgrading upstream: bump `UPSTREAM_TAG` (in `build.sh` and in the script), rebase
+the patches that no longer apply, regenerate.
 
-Rebase the conflicting patch, bump `UPSTREAM_TAG` in `build.sh` and the base
-version in both READMEs, then rebuild.
-
-## Rolling back
+Rolling back:
 
 ```sh
 docker tag new-api-local:local new-api-local:broken   # keep the bad one
-docker tag new-api-local:<good> new-api-local:local
+docker tag ghcr.io/bloodarea/new-api:<good-tag> new-api-local:local
 cd deploy && docker compose up -d
 ```
 
-Postgres data is untouched by an image swap, but note that **a new-api
-downgrade is not always schema-safe** — `AutoMigrate` adds columns and never
-removes them, so going back a version usually works, while going forward and
-then back across a schema change may not. Dump the database before a
+Postgres data survives an image swap, but **a new-api downgrade is not always
+schema-safe** — `AutoMigrate` adds columns and never removes them. Dump before a
 version jump:
 
 ```sh
@@ -245,8 +114,7 @@ Backups contain tokens, password hashes and channel keys — `.gitignore` blocks
 
 ## License
 
-Upstream new-api is **AGPL-3.0**. The patches here are derivative work and
-carry the same license. This repository contains no upstream source; `src/`
-is fetched at build time and stays out of git. Self-hosting for your own use
-is fine; serving it to others or redistributing the image brings AGPL source
-obligations.
+Upstream new-api is **AGPL-3.0**; the patches here are derivative work under the
+same license. This repository contains no upstream source — `src/` is fetched at
+build time and stays out of git. Self-hosting for personal use is fine; serving
+it to others or redistributing the image brings AGPL source obligations.
