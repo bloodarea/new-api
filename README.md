@@ -42,6 +42,7 @@ Three ways to get it there:
 | Way | When | Command |
 |---|---|---|
 | Build locally | machine has the toolchain | `./build.sh` |
+| GitHub Actions | build host is short on disk/RAM | run the workflow, then `docker pull` (see below) |
 | Import | build host ≠ run host | `docker save new-api-local:local \| gzip > img.tgz`, then `gunzip -c img.tgz \| docker load` |
 | Private registry | several hosts | `docker push`, then edit `image:` in the compose file |
 
@@ -123,6 +124,36 @@ It will:
 
 Overridable: `UPSTREAM_TAG`, `UPSTREAM_URL`, `IMAGE`, `GOPROXY`,
 `GOMAXPROCS`, `GO_BIN_DIR`, `BUN_BIN_DIR`.
+
+## Building on GitHub Actions
+
+`build.sh` wants Git, Go, Bun and Docker on one machine. When that machine is
+short on disk, `.github/workflows/build-image.yml` runs the same recipe on a
+GitHub-hosted runner and publishes the image to the Gitea registry instead.
+
+Two deliberate differences: it applies only `01`/`02` and writes `VERSION`
+itself, because `03-docker-mirror.patch` points at China mirrors that only add
+latency to a runner outside China; and it builds the runtime image with
+`BASE_REGISTRY=` empty, so the base image comes from docker.io rather than the
+mirror.
+
+One-time setup:
+
+1. Mirror this repo to GitHub and enable Actions there (forks ship with Actions
+   disabled).
+2. Add repository secrets `GITEA_USER` (e.g. `bloodarea`) and `GITEA_TOKEN`
+   (a Gitea token with `write:package`).
+3. Run the **Build patched image** workflow — inputs: `upstream_tag`,
+   `image_tag`, `image`, `push`.
+
+Then on the run host:
+
+```sh
+docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41
+docker tag  106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+```
+
+The workflow also uploads the bare binary as a 14-day artifact.
 
 ## Deploy
 

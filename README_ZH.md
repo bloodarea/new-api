@@ -15,6 +15,7 @@
 - [运行需要预构建镜像（重要）](#运行需要预构建镜像重要)
 - [编译工具链](#编译工具链)
 - [构建](#构建)
+- [用 GitHub Actions 构建](#用-github-actions-构建)
 - [部署](#部署)
 - [对上游的修改](#对上游的修改)
 - [升级上游](#升级上游)
@@ -91,6 +92,7 @@ Error response from daemon: failed to resolve reference
 | 方式 | 适用场景 | 命令 |
 |---|---|---|
 | **本机构建** | 有工具链的机器 | `./build.sh` |
+| **GitHub Actions** | 本机磁盘/内存不够 | 跑 workflow，然后 `docker pull`（见下节） |
 | **从别处导入** | 构建机与运行机分离 | `docker save new-api-local:local \| gzip > img.tgz` → 目标机 `gunzip -c img.tgz \| docker load` |
 | **私有 registry** | 多机共享 | `docker tag` + `docker push`，然后改 compose 的 `image:` |
 
@@ -243,6 +245,27 @@ GO_BIN_DIR=/path/to/go/bin BUN_BIN_DIR=/path/to/bun/bin ./build.sh
 | `GOPROXY` | `https://goproxy.cn,direct` | Go 模块代理 |
 | `GOMAXPROCS` | （Go 自动） | 限制编译并发，低内存机器用 |
 | `GO_BIN_DIR` / `BUN_BIN_DIR` | （见上节） | 工具链位置 |
+
+## 用 GitHub Actions 构建
+
+本机构建要求 Git、Go、Bun、Docker 在同一台机器上，且磁盘和内存都要够。磁盘紧张时，可以改由 `.github/workflows/build-image.yml` 在 GitHub 托管 runner 上跑同一套配方，构建完直接把镜像推到 Gitea registry。
+
+和 `build.sh` 有两处刻意的不同：只应用 `01`/`02` 并自己写 `VERSION`（`03-docker-mirror.patch` 指向国内镜像源，对境外 runner 只会更慢）；打运行时镜像时 `BASE_REGISTRY=` 传空，基础镜像从 docker.io 拉而不是镜像站。
+
+一次性准备：
+
+1. 把本仓库镜像到 GitHub，并在 GitHub 上**启用 Actions**（fork 默认是关的）
+2. 添加仓库 secret：`GITEA_USER`（如 `bloodarea`）、`GITEA_TOKEN`（Gitea token，需 `write:package` 权限）
+3. 运行 **Build patched image** workflow，输入 `upstream_tag`、`image_tag`、`image`、`push`
+
+构建完成后在运行机上：
+
+```sh
+docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41
+docker tag  106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+```
+
+workflow 还会把裸二进制作为 artifact 上传（保留 14 天），需要单独换二进制时可以直接下。
 
 ---
 
