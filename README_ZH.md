@@ -270,14 +270,15 @@ FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
 fork 上的一次性设置：
 
 1. Settings → Actions → 允许 workflows（fork 默认关闭）
-2. Settings → Secrets and variables → Actions：加 `GITEA_USER`（如 `bloodarea`）和 `GITEA_TOKEN`（Gitea token，需 `write:package` 权限）
-3. Actions → **Build patched image** → Run workflow
+2. Actions → **Build patched image** → Run workflow
 
-构建完成后镜像在 Gitea registry 里，运行机上：
+不需要任何 secret：镜像推到 GitHub Container Registry，workflow 用自带的 `GITHUB_TOKEN`（`packages: write`）登录推送。第一次推送会把 `ghcr.io/bloodarea/new-api` 建成**私有**包；如果部署机要免登录拉取，去包的设置里把可见性改成 public。
+
+构建完成后在运行机上：
 
 ```sh
-docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41
-docker tag  106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
 ```
 
 workflow 还会把裸二进制作为 artifact 上传（保留 14 天）。

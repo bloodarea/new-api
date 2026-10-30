@@ -154,18 +154,22 @@ skipped on purpose (its China mirrors only add latency to a runner outside
 China), and the runtime image is built with `BASE_REGISTRY=` empty, i.e. plain
 docker.io.
 
-One-time fork setup:
+Setup, once per fork:
 
 1. Settings → Actions → allow workflows (forks ship with Actions disabled).
-2. Settings → Secrets and variables → Actions: `GITEA_USER` (e.g. `bloodarea`)
-   and `GITEA_TOKEN` (a Gitea token with `write:package`).
-3. Actions → **Build patched image** → Run workflow.
+2. Actions → **Build patched image** → Run workflow.
 
-The image lands in the Gitea registry, so on the run host:
+No secret is needed: the image goes to GitHub Container Registry and the
+workflow pushes it with its own `GITHUB_TOKEN` (`packages: write`). The first
+push creates `ghcr.io/bloodarea/new-api` as a **private** package — set it to
+public in the package settings if the deploy host should pull without
+credentials.
+
+On the run host:
 
 ```sh
-docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41
-docker tag  106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
 ```
 
 The workflow also uploads the bare binary as a 14-day artifact.
