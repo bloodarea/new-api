@@ -4,9 +4,14 @@ name: Build patched image
 # fork as .github/workflows/build-image.yml. It does not run in this repo.
 #
 # It builds the branch fork-branch.sh publishes — the upstream tag plus our
-# patches — and pushes the runtime image to the Gitea registry the deploy host
-# pulls from. The source branch is an input, so the fork's default branch can
-# stay a plain mirror of upstream and still show the "Run workflow" button.
+# patches — and pushes the runtime image to GitHub Container Registry (GHCR).
+# The source branch is an input, so the fork's default branch can stay a plain
+# mirror of upstream and still show the "Run workflow" button.
+#
+# GHCR needs no extra secret: the workflow's own GITHUB_TOKEN can push, which
+# is why `packages: write` is granted below. The first push creates the package
+# as private — flip it to public in the package settings if the deploy host
+# should pull without credentials.
 #
 # Deliberate differences from build.sh: 03-docker-mirror.patch is not applied
 # (its China mirrors only add latency to a runner outside China) and the
@@ -24,16 +29,15 @@ on:
         required: true
         default: v1.0.0-rc.41
       image:
-        description: Registry path of the published image
+        description: GHCR path of the published image
         required: true
-        default: 106.53.27.77:3000/bloodarea/new-api
+        default: ghcr.io/bloodarea/new-api
       push:
-        description: Push the image to the Gitea registry
+        description: Push the image to GHCR
         type: boolean
         default: true
 
 env:
-  REGISTRY: 106.53.27.77:3000
   # Toolchains the local build was verified with.
   GO_VERSION: 1.26.1
   BUN_VERSION: 1.4.0
@@ -43,6 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - name: Check out the patched source
         uses: actions/checkout@v4
@@ -100,20 +105,11 @@ jobs:
           docker image inspect "${{ inputs.image }}:${{ inputs.image_tag }}" \
             --format 'image {{.Id}} {{.Size}} bytes'
 
-      # The registry speaks plain HTTP on :3000, so the daemon has to allow it.
-      - name: Allow the plain-HTTP registry
+      - name: Push to GHCR
         if: inputs.push
         run: |
-          echo '{"insecure-registries":["106.53.27.77:3000"]}' | sudo tee /etc/docker/daemon.json >/dev/null
-          sudo systemctl restart docker
-
-      - name: Push to the Gitea registry
-        if: inputs.push
-        env:
-          GITEA_USER: ${{ secrets.GITEA_USER }}
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-        run: |
-          echo "$GITEA_TOKEN" | docker login "$REGISTRY" -u "$GITEA_USER" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker push "${{ inputs.image }}:${{ inputs.image_tag }}"
           docker push "${{ inputs.image }}:latest"
 
