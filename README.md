@@ -127,26 +127,34 @@ Overridable: `UPSTREAM_TAG`, `UPSTREAM_URL`, `IMAGE`, `GOPROXY`,
 
 ## Building on GitHub Actions
 
-`build.sh` wants Git, Go, Bun and Docker on one machine. When that machine is
-short on disk, `.github/workflows/build-image.yml` runs the same recipe on a
-GitHub-hosted runner and publishes the image to the Gitea registry instead.
+GitHub Actions only runs on GitHub repositories, and this repo lives on our
+Gitea — so the CI half lives in the fork of upstream
+(`github.com/bloodarea/new-api`), and `./fork-branch.sh` keeps it in sync with
+the patches here:
 
-Two deliberate differences: it applies only `01`/`02` and writes `VERSION`
-itself, because `03-docker-mirror.patch` points at China mirrors that only add
-latency to a runner outside China; and it builds the runtime image with
-`BASE_REGISTRY=` empty, so the base image comes from docker.io rather than the
-mirror.
+| In the fork | What it is |
+|---|---|
+| `main` | Upstream mirror + `.github/workflows/build-image.yml`. GitHub only lists workflows from the default branch, so this is what gives you the "Run workflow" button. |
+| `deploy/rc.41` | The tree CI builds: upstream `v1.0.0-rc.41` + `patches/01` + `patches/02` + `VERSION` + `deploy/Dockerfile` |
 
-One-time setup:
+```sh
+FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
+```
 
-1. Mirror this repo to GitHub and enable Actions there (forks ship with Actions
-   disabled).
-2. Add repository secrets `GITEA_USER` (e.g. `bloodarea`) and `GITEA_TOKEN`
-   (a Gitea token with `write:package`).
-3. Run the **Build patched image** workflow — inputs: `upstream_tag`,
-   `image_tag`, `image`, `push`.
+Re-run that whenever a patch changes; it resets `main` and the deploy branch in
+the clone, so point it at a clean clone of the fork. `03-docker-mirror.patch` is
+skipped on purpose (its China mirrors only add latency to a runner outside
+China), and the runtime image is built with `BASE_REGISTRY=` empty, i.e. plain
+docker.io.
 
-Then on the run host:
+One-time fork setup:
+
+1. Settings → Actions → allow workflows (forks ship with Actions disabled).
+2. Settings → Secrets and variables → Actions: `GITEA_USER` (e.g. `bloodarea`)
+   and `GITEA_TOKEN` (a Gitea token with `write:package`).
+3. Actions → **Build patched image** → Run workflow.
+
+The image lands in the Gitea registry, so on the run host:
 
 ```sh
 docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41

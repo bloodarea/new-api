@@ -248,24 +248,33 @@ GO_BIN_DIR=/path/to/go/bin BUN_BIN_DIR=/path/to/bun/bin ./build.sh
 
 ## 用 GitHub Actions 构建
 
-本机构建要求 Git、Go、Bun、Docker 在同一台机器上，且磁盘和内存都要够。磁盘紧张时，可以改由 `.github/workflows/build-image.yml` 在 GitHub 托管 runner 上跑同一套配方，构建完直接把镜像推到 Gitea registry。
+GitHub Actions 只能跑在 GitHub 仓库上，而本仓库在 Gitea —— 所以 CI 那半边放在上游的 fork（`github.com/bloodarea/new-api`）里，由 `./fork-branch.sh` 保证它和这里的补丁同步：
 
-和 `build.sh` 有两处刻意的不同：只应用 `01`/`02` 并自己写 `VERSION`（`03-docker-mirror.patch` 指向国内镜像源，对境外 runner 只会更慢）；打运行时镜像时 `BASE_REGISTRY=` 传空，基础镜像从 docker.io 拉而不是镜像站。
+| fork 里的分支 | 是什么 |
+|---|---|
+| `main` | 上游镜像 + `.github/workflows/build-image.yml`。GitHub 只从默认分支列出 workflow，所以这个文件负责让 Actions 页面出现「Run workflow」按钮 |
+| `deploy/rc.41` | CI 实际编译的树：上游 `v1.0.0-rc.41` + `patches/01` + `patches/02` + `VERSION` + `deploy/Dockerfile` |
 
-一次性准备：
+```sh
+FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
+```
 
-1. 把本仓库镜像到 GitHub，并在 GitHub 上**启用 Actions**（fork 默认是关的）
-2. 添加仓库 secret：`GITEA_USER`（如 `bloodarea`）、`GITEA_TOKEN`（Gitea token，需 `write:package` 权限）
-3. 运行 **Build patched image** workflow，输入 `upstream_tag`、`image_tag`、`image`、`push`
+改了补丁就重跑一次；它会重置克隆里的 `main` 和 deploy 分支，所以指向一个干净的 fork 克隆。脚本刻意跳过 `03-docker-mirror.patch`（国内镜像源对境外 runner 只有拖慢），打运行时镜像时 `BASE_REGISTRY=` 传空，基础镜像走 docker.io。
 
-构建完成后在运行机上：
+fork 上的一次性设置：
+
+1. Settings → Actions → 允许 workflows（fork 默认关闭）
+2. Settings → Secrets and variables → Actions：加 `GITEA_USER`（如 `bloodarea`）和 `GITEA_TOKEN`（Gitea token，需 `write:package` 权限）
+3. Actions → **Build patched image** → Run workflow
+
+构建完成后镜像在 Gitea registry 里，运行机上：
 
 ```sh
 docker pull 106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41
 docker tag  106.53.27.77:3000/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
 ```
 
-workflow 还会把裸二进制作为 artifact 上传（保留 14 天），需要单独换二进制时可以直接下。
+workflow 还会把裸二进制作为 artifact 上传（保留 14 天）。
 
 ---
 

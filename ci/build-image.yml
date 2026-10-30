@@ -1,25 +1,26 @@
 name: Build patched image
 
-# Same recipe as build.sh, but runs on a GitHub-hosted runner so the build
-# machine needs no Go/Bun/Docker. Two deliberate differences:
+# This file lives here as a template; fork-branch.sh copies it into the GitHub
+# fork as .github/workflows/build-image.yml. It does not run in this repo.
 #
-#   * 03-docker-mirror.patch is skipped. It points the base images and the
-#     package managers at China mirrors; the runner's egress is outside China,
-#     where those mirrors only add latency.
-#   * The runtime image is built with an empty BASE_REGISTRY, i.e. plain
-#     docker.io, for the same reason.
+# It builds the branch fork-branch.sh publishes — the upstream tag plus our
+# patches — and pushes the runtime image to the Gitea registry the deploy host
+# pulls from. The source branch is an input, so the fork's default branch can
+# stay a plain mirror of upstream and still show the "Run workflow" button.
 #
-# The image is pushed to the Gitea registry the deploy host pulls from.
+# Deliberate differences from build.sh: 03-docker-mirror.patch is not applied
+# (its China mirrors only add latency to a runner outside China) and the
+# runtime image is built with BASE_REGISTRY empty, i.e. plain docker.io.
 
 on:
   workflow_dispatch:
     inputs:
-      upstream_tag:
-        description: Upstream new-api tag to build
+      source_ref:
+        description: Branch holding the patched source
         required: true
-        default: v1.0.0-rc.41
+        default: deploy/rc.41
       image_tag:
-        description: Tag to publish (also written into VERSION)
+        description: Tag to publish (also embedded as the build version)
         required: true
         default: v1.0.0-rc.41
       image:
@@ -43,27 +44,19 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Check out this repo
+      - name: Check out the patched source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
 
-      - name: Check out upstream at the tracked tag
-        env:
-          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+      - name: Verify this is the patched source tree
         run: |
-          git clone --depth 1 --branch "$UPSTREAM_TAG" \
-            https://github.com/QuantumNous/new-api.git src
-          git -C src log -1 --format='upstream %H (%s)'
-
-      - name: Apply patches
-        env:
-          VERSION: ${{ inputs.image_tag }}
-        run: |
-          cd src
-          for p in ../patches/0[12]-*.patch; do
-            git apply "$p"
-            echo "applied $(basename "$p")"
-          done
-          echo "$VERSION" > VERSION
+          test -f go.mod && test -f main.go \
+            || { echo "::error::${{ inputs.source_ref }} is not a new-api source tree"; exit 1; }
+          test -f deploy/Dockerfile \
+            || { echo "::error::deploy/Dockerfile is missing on ${{ inputs.source_ref }}"; exit 1; }
+          grep -q fetch_icon controller/channel.go \
+            || { echo "::error::the patches are not applied on ${{ inputs.source_ref }}"; exit 1; }
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -77,7 +70,7 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
 
       - name: Build frontend
-        working-directory: src/web
+        working-directory: web
         env:
           DISABLE_ESLINT_PLUGIN: "true"
           VITE_REACT_APP_VERSION: ${{ inputs.image_tag }}
@@ -86,29 +79,26 @@ jobs:
           bun run build
 
       - name: Build backend
-        working-directory: src
         env:
-          VERSION: ${{ inputs.image_tag }}
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: amd64
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/runtime/licenses"
-          go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${VERSION}'" \
+          mkdir -p runtime/licenses
+          go build \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${{ inputs.image_tag }}'" \
             -o "$GITHUB_WORKSPACE/runtime/new-api" .
-          cp LICENSE NOTICE THIRD-PARTY-LICENSES.md "$GITHUB_WORKSPACE/runtime/licenses/"
+          cp LICENSE NOTICE THIRD-PARTY-LICENSES.md runtime/licenses/
 
       - name: Build runtime image
-        env:
-          VERSION: ${{ inputs.image_tag }}
-          IMAGE: ${{ inputs.image }}
         run: |
           docker build \
             --build-arg BASE_REGISTRY= \
-            -t "$IMAGE:$VERSION" \
-            -t "$IMAGE:latest" \
+            -t "${{ inputs.image }}:${{ inputs.image_tag }}" \
+            -t "${{ inputs.image }}:latest" \
             -f deploy/Dockerfile runtime
-          docker image inspect "$IMAGE:$VERSION" --format 'image {{.Id}} {{.Size}} bytes'
+          docker image inspect "${{ inputs.image }}:${{ inputs.image_tag }}" \
+            --format 'image {{.Id}} {{.Size}} bytes'
 
       # The registry speaks plain HTTP on :3000, so the daemon has to allow it.
       - name: Allow the plain-HTTP registry
@@ -120,14 +110,12 @@ jobs:
       - name: Push to the Gitea registry
         if: inputs.push
         env:
-          VERSION: ${{ inputs.image_tag }}
-          IMAGE: ${{ inputs.image }}
           GITEA_USER: ${{ secrets.GITEA_USER }}
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
         run: |
           echo "$GITEA_TOKEN" | docker login "$REGISTRY" -u "$GITEA_USER" --password-stdin
-          docker push "$IMAGE:$VERSION"
-          docker push "$IMAGE:latest"
+          docker push "${{ inputs.image }}:${{ inputs.image_tag }}"
+          docker push "${{ inputs.image }}:latest"
 
       - name: Upload the binary
         uses: actions/upload-artifact@v4
