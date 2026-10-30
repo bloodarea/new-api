@@ -60,7 +60,7 @@ jobs:
             || { echo "::error::${{ inputs.source_ref }} is not a new-api source tree"; exit 1; }
           test -f deploy/Dockerfile \
             || { echo "::error::deploy/Dockerfile is missing on ${{ inputs.source_ref }}"; exit 1; }
-          grep -q fetch_icon controller/channel.go \
+          grep -q 'func FetchChannelIcon' controller/channel.go \
             || { echo "::error::the patches are not applied on ${{ inputs.source_ref }}"; exit 1; }
 
       - name: Set up Go
