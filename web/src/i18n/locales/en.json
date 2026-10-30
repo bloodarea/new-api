@@ -2653,7 +2653,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
@@ -6853,6 +6853,14 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Channel URL": "Channel URL",
+    "Channel Icon": "Channel Icon",
+    "Fetch Icon": "Fetch Icon",
+    "Enter a website or Base URL first": "Enter a website or Base URL first",
+    "Failed to fetch icon": "Failed to fetch icon",
+    "Icon fetched": "Icon fetched",
+    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.",
+    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon."
   }
 }

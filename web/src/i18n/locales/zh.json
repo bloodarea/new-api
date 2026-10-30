@@ -2653,7 +2653,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高级自定义渠道仅对 /v1/responses 且不做协议转换的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
@@ -6853,6 +6853,14 @@
     "Zhipu": "智谱",
     "Zhipu GLM": "智谱GLM",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Channel URL": "渠道网址",
+    "Channel Icon": "渠道图标",
+    "Fetch Icon": "获取图标",
+    "Enter a website or Base URL first": "请先填写渠道网址或 Base URL",
+    "Failed to fetch icon": "获取图标失败",
+    "Icon fetched": "图标已获取",
+    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "渠道网址，会在渠道列表中显示为可点击的链接；下方图标即从该网址获取。",
+    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "列表中显示的渠道图标图片地址。点击「获取图标」会自动填入，也可直接粘贴任意图片地址；留空则使用默认类型图标。"
   }
 }

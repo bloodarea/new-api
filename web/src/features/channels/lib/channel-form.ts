@@ -263,6 +263,8 @@ export const channelFormSchema = z
     // Channel extra settings (stored in setting JSON, not sent directly)
     force_format: z.boolean().optional(),
     thinking_to_content: z.boolean().optional(),
+    site_url: z.string().optional(),
+    icon_url: z.string().optional(),
     proxy: z
       .string()
       .optional()
@@ -457,6 +459,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   // Channel extra settings
   force_format: false,
   thinking_to_content: false,
+  site_url: '',
+  icon_url: '',
   proxy: '',
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
@@ -501,6 +505,8 @@ export function transformChannelToFormDefaults(
     task_extend_plugin_keys: [] as string[],
     force_format: false,
     thinking_to_content: false,
+    site_url: '',
+    icon_url: '',
     proxy: '',
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
@@ -522,6 +528,8 @@ export function transformChannelToFormDefaults(
         task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
+        site_url: parsed.site_url || '',
+        icon_url: parsed.icon_url || '',
         proxy: parsed.proxy || '',
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
@@ -655,6 +663,8 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
         : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
+    site_url: formData.site_url?.trim() || undefined,
+    icon_url: formData.icon_url?.trim() || undefined,
     proxy: formData.proxy?.trim() || '',
     pass_through_body_enabled:
       formData.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&

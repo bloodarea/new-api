@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   ListOrdered,
   Shuffle,
   SlidersHorizontal,
@@ -724,6 +725,7 @@ export function useChannelsColumns(
 
           // Regular channel row
           const settings = parseChannelSettings(channel.setting)
+          const siteUrl = settings.site_url?.trim() || ''
           const isPassThrough = settings.pass_through_body_enabled === true
           const hasParamOverride = Boolean(channel.param_override?.trim())
 
@@ -767,6 +769,18 @@ export function useChannelsColumns(
                     </TooltipProvider>
                   )}
                   <UpstreamUpdateTags channel={channel} />
+                  {siteUrl && (
+                    <a
+                      href={siteUrl}
+                      target='_blank'
+                      rel='noreferrer'
+                      title={siteUrl}
+                      className='text-muted-foreground hover:text-primary shrink-0'
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ExternalLink className='h-3.5 w-3.5' />
+                    </a>
+                  )}
                 </div>
                 {channel.remark && (
                   <TooltipProvider delay={200}>
@@ -816,6 +830,8 @@ export function useChannelsColumns(
           const typeName = t(typeNameKey)
           const iconName = getChannelTypeIcon(type)
           const channel = row.original as Channel
+          const customIconUrl =
+            parseChannelSettings(channel.setting)?.icon_url?.trim() || ''
           const isMultiKey = isMultiKeyChannel(channel)
           const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
           const MultiKeyModeIcon =
@@ -864,15 +880,26 @@ export function useChannelsColumns(
                         <div className='max-w-full min-w-0 overflow-hidden' />
                       }
                     >
-                      <ProviderBadge
-                        iconKey={`${iconName}.Color`}
-                        iconSize={18}
-                        label={typeName}
-                        colorText={false}
-                        copyable={false}
-                        showDot={false}
-                        className='max-w-full min-w-0 overflow-hidden'
-                      />
+                      {customIconUrl ? (
+                        <div className='flex max-w-full min-w-0 items-center gap-2 overflow-hidden'>
+                          <img
+                            src={customIconUrl}
+                            alt=''
+                            className='border-border h-[18px] w-[18px] shrink-0 rounded-sm border bg-white object-contain'
+                          />
+                          <span className='truncate text-sm'>{typeName}</span>
+                        </div>
+                      ) : (
+                        <ProviderBadge
+                          iconKey={`${iconName}.Color`}
+                          iconSize={18}
+                          label={typeName}
+                          colorText={false}
+                          copyable={false}
+                          showDot={false}
+                          className='max-w-full min-w-0 overflow-hidden'
+                        />
+                      )}
                     </TooltipTrigger>
                     <TooltipContent side='top'>{typeName}</TooltipContent>
                   </Tooltip>

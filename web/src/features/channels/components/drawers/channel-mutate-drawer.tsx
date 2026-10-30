@@ -128,6 +128,7 @@ import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
+  fetchChannelIcon,
   getAllModels,
   getChannel,
   getChannelDefaultBaseURLs,
@@ -1737,6 +1738,33 @@ export function ChannelMutateDrawer({
     ]
   )
 
+  const [iconFetching, setIconFetching] = useState(false)
+
+  const handleFetchChannelIcon = useCallback(async () => {
+    const source =
+      form.getValues('site_url')?.trim() ||
+      form.getValues('base_url')?.trim() ||
+      ''
+    if (!source) {
+      toast.error(t('Enter a website or Base URL first'))
+      return
+    }
+    setIconFetching(true)
+    try {
+      const res = await fetchChannelIcon(source)
+      if (!res.success || !res.data?.icon_url) {
+        toast.error(res.message || t('Failed to fetch icon'))
+        return
+      }
+      form.setValue('icon_url', res.data.icon_url, { shouldDirty: true })
+      toast.success(t('Icon fetched'))
+    } catch (error) {
+      handleServerError(error, t('Failed to fetch icon'))
+    } finally {
+      setIconFetching(false)
+    }
+  }, [form, t])
+
   const onInvalid: SubmitErrorHandler<ChannelFormValues> = useCallback(
     (errors) => {
       const field = Object.keys(errors)[0]
@@ -2564,6 +2592,76 @@ export function ChannelMutateDrawer({
                 <FormControl>
                   <Input placeholder={t(FIELD_PLACEHOLDERS.NAME)} {...field} />
                 </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='site_url'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Channel URL')}</FormLabel>
+                <div className='flex items-center gap-2'>
+                  <FormControl>
+                    <Input
+                      placeholder='https://example.com'
+                      {...field}
+                      disabled={sensitiveLocked}
+                    />
+                  </FormControl>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    className='shrink-0'
+                    disabled={sensitiveLocked || iconFetching}
+                    onClick={handleFetchChannelIcon}
+                  >
+                    {iconFetching ? t('Fetching...') : t('Fetch Icon')}
+                  </Button>
+                </div>
+                <FormDescription>
+                  {t(
+                    'Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='icon_url'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Channel Icon')}</FormLabel>
+                <div className='flex items-center gap-2'>
+                  {field.value ? (
+                    <img
+                      src={field.value}
+                      alt=''
+                      className='border-border h-9 w-9 shrink-0 rounded-md border bg-white object-contain p-0.5'
+                      onError={(e) => {
+                        e.currentTarget.style.visibility = 'hidden'
+                      }}
+                      onLoad={(e) => {
+                        e.currentTarget.style.visibility = 'visible'
+                      }}
+                    />
+                  ) : null}
+                  <FormControl>
+                    <Input
+                      placeholder='https://example.com/favicon.ico'
+                      {...field}
+                      disabled={sensitiveLocked}
+                    />
+                  </FormControl>
+                </div>
+                <FormDescription>
+                  {t(
+                    'Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.'
+                  )}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

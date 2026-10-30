@@ -165,6 +165,22 @@ export async function getChannelDefaultBaseURLs(): Promise<
 }
 
 /**
+ * Resolve the icon (favicon) for a channel from a website or direct image URL.
+ */
+export async function fetchChannelIcon(url: string): Promise<{
+  success: boolean
+  message?: string
+  data?: { icon_url: string }
+}> {
+  const response = await api.get<{
+    success: boolean
+    message?: string
+    data?: { icon_url: string }
+  }>('/api/channel/fetch_icon', { params: { url } })
+  return response.data
+}
+
+/**
  * Create new channel(s)
  * Supports single, batch, and multi-key modes
  */

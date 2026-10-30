@@ -1,0 +1,121 @@
+name: Build patched image
+
+# This file lives here as a template; fork-branch.sh copies it into the GitHub
+# fork as .github/workflows/build-image.yml. It does not run in this repo.
+#
+# It builds the branch fork-branch.sh publishes — the upstream tag plus our
+# patches — and pushes the runtime image to GitHub Container Registry (GHCR).
+# The source branch is an input, so the fork's default branch can stay a plain
+# mirror of upstream and still show the "Run workflow" button.
+#
+# GHCR needs no extra secret: the workflow's own GITHUB_TOKEN can push, which
+# is why `packages: write` is granted below. The first push creates the package
+# as private — flip it to public in the package settings if the deploy host
+# should pull without credentials.
+#
+# Deliberate differences from build.sh: 03-docker-mirror.patch is not applied
+# (its China mirrors only add latency to a runner outside China) and the
+# runtime image is built with BASE_REGISTRY empty, i.e. plain docker.io.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch holding the patched source
+        required: true
+        default: deploy/rc.41
+      image_tag:
+        description: Tag to publish (also embedded as the build version)
+        required: true
+        default: v1.0.0-rc.41
+      image:
+        description: GHCR path of the published image
+        required: true
+        default: ghcr.io/bloodarea/new-api
+      push:
+        description: Push the image to GHCR
+        type: boolean
+        default: true
+
+env:
+  # Toolchains the local build was verified with.
+  GO_VERSION: 1.26.1
+  BUN_VERSION: 1.4.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out the patched source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Verify this is the patched source tree
+        run: |
+          test -f go.mod && test -f main.go \
+            || { echo "::error::${{ inputs.source_ref }} is not a new-api source tree"; exit 1; }
+          test -f deploy/Dockerfile \
+            || { echo "::error::deploy/Dockerfile is missing on ${{ inputs.source_ref }}"; exit 1; }
+          grep -q 'func FetchChannelIcon' controller/channel.go \
+            || { echo "::error::the patches are not applied on ${{ inputs.source_ref }}"; exit 1; }
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Build frontend
+        working-directory: web
+        env:
+          DISABLE_ESLINT_PLUGIN: "true"
+          VITE_REACT_APP_VERSION: ${{ inputs.image_tag }}
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Build backend
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: amd64
+        run: |
+          mkdir -p runtime/licenses
+          go build \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=${{ inputs.image_tag }}'" \
+            -o "$GITHUB_WORKSPACE/runtime/new-api" .
+          cp LICENSE NOTICE THIRD-PARTY-LICENSES.md runtime/licenses/
+
+      - name: Build runtime image
+        run: |
+          docker build \
+            --build-arg BASE_REGISTRY= \
+            -t "${{ inputs.image }}:${{ inputs.image_tag }}" \
+            -t "${{ inputs.image }}:latest" \
+            -f deploy/Dockerfile runtime
+          docker image inspect "${{ inputs.image }}:${{ inputs.image_tag }}" \
+            --format 'image {{.Id}} {{.Size}} bytes'
+
+      - name: Push to GHCR
+        if: inputs.push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "${{ inputs.image }}:${{ inputs.image_tag }}"
+          docker push "${{ inputs.image }}:latest"
+
+      - name: Upload the binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-api-${{ inputs.image_tag }}
+          path: runtime/new-api
+          retention-days: 14

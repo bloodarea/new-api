@@ -27,15 +27,21 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
 		middleware.RouteTag("web"),
 		gzip.Gzip(gzip.DefaultCompression),
 		middleware.AccessTokenAudit(),
-		middleware.GlobalWebRateLimit(),
 		middleware.Cache(),
+		// Serve content-hashed build assets BEFORE the web rate limiter: a single
+		// dashboard load requests dozens of chunks, and counting them against the
+		// per-IP budget makes a normal reload trip 429/ChunkLoadError. static.Serve
+		// ends the request for a real file and falls through to the limiter + SPA
+		// fallback only for non-asset paths.
 		static.Serve("/", frontendFS),
+		middleware.GlobalWebRateLimit(),
 		func(c *gin.Context) {
 			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
 				controller.RelayNotFound(c)
 				return
 			}
-			c.Header("Cache-Control", "no-cache")
+			c.Header("Cache-Control", "no-store")
+			c.Header("Pragma", "no-cache")
 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
 		},
 	)

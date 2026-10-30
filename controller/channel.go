@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -346,6 +349,139 @@ func FetchUpstreamModels(c *gin.Context) {
 		"message": "",
 		"data":    ids,
 	})
+}
+
+var (
+	iconLinkTagRe = regexp.MustCompile(`(?is)<link\b[^>]*>`)
+	iconRelRe     = regexp.MustCompile(`(?is)\brel\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	iconHrefRe    = regexp.MustCompile(`(?is)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+	iconExtRe     = regexp.MustCompile(`(?i)\.(ico|png|jpe?g|gif|svg|webp|avif)$`)
+)
+
+// matchAttr returns the first non-empty capture group of re against tag, which
+// covers quoted, single-quoted and unquoted attribute values.
+func matchAttr(re *regexp.Regexp, tag string) string {
+	m := re.FindStringSubmatch(tag)
+	if m == nil {
+		return ""
+	}
+	for i := 1; i < len(m); i++ {
+		if m[i] != "" {
+			return m[i]
+		}
+	}
+	return ""
+}
+
+// FetchChannelIcon resolves the dashboard icon for a channel. It accepts either
+// a direct image URL or a website URL; for a website it parses the HTML for a
+// <link rel="...icon..."> and falls back to <origin>/favicon.ico. The response
+// data is {"icon_url": "..."} so the frontend stores an absolute image URL.
+func FetchChannelIcon(c *gin.Context) {
+	rawURL := strings.TrimSpace(c.Query("url"))
+	if rawURL == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "url is required"})
+		return
+	}
+	if !strings.Contains(rawURL, "://") {
+		rawURL = "https://" + rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid url"})
+		return
+	}
+
+	iconURL, err := resolveSiteIcon(parsed.String())
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"icon_url": iconURL}})
+}
+
+func resolveSiteIcon(pageURL string) (string, error) {
+	parsed, err := url.Parse(pageURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url")
+	}
+	// A direct image URL is used as-is.
+	if iconExtRe.MatchString(parsed.Path) {
+		return pageURL, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := service.GetSSRFProtectedHTTPClient()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("invalid request")
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; NewAPI-IconFetcher/1.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	finalURL := pageURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+
+	if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "image/") {
+		return finalURL, nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	if err != nil {
+		return "", fmt.Errorf("read failed: %v", err)
+	}
+
+	base, err := url.Parse(finalURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid url")
+	}
+
+	if icon := parseIconFromHTML(string(body), base); icon != "" {
+		return icon, nil
+	}
+	return base.Scheme + "://" + base.Host + "/favicon.ico", nil
+}
+
+// parseIconFromHTML returns the best <link rel="...icon..."> href resolved
+// against base, preferring a regular icon over an apple-touch-icon. It returns
+// "" when the HTML declares no usable icon.
+func parseIconFromHTML(html string, base *url.URL) string {
+	apple := ""
+	for _, tag := range iconLinkTagRe.FindAllString(html, -1) {
+		rel := strings.ToLower(matchAttr(iconRelRe, tag))
+		if !strings.Contains(rel, "icon") {
+			continue
+		}
+		href := strings.TrimSpace(matchAttr(iconHrefRe, tag))
+		if href == "" {
+			continue
+		}
+		resolved, err := base.Parse(href)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(rel, "apple") {
+			if apple == "" {
+				apple = resolved.String()
+			}
+			continue
+		}
+		return resolved.String()
+	}
+	return apple
 }
 
 func FixChannelsAbilities(c *gin.Context) {
