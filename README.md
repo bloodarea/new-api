@@ -15,16 +15,17 @@ git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-dep
 
 ## What's different from upstream
 
-Base: `v1.0.0-rc.41` (upstream commit `2035a82`), three patches applied in
+Base: `v1.0.0-rc.51` (upstream commit `c9c6da278`), four patches applied in
 filename order.
 
 | Patch | Change |
 |---|---|
 | `01-channel-site-icon` | Channels can carry a website URL, and the dashboard fetches that site's favicon and shows it in the channel list. Adds `GET /api/channel/fetch_icon` (`ChannelOperate`), `SiteURL`/`IconURL` in channel settings (settings JSON only, no schema change), `<link rel="…icon…">` parsing with an `<origin>/favicon.ico` fallback, SSRF-protected HTTP client, plus drawer/column UI and a unit test. |
-| `02-web-cache-ratelimit` | Two dashboard fixes. **Cache**: only content-hashed `/static/*` gets a long `max-age`; `index.html` and SPA fallbacks get `no-store`, so a browser never keeps HTML pointing at a previous build's chunks. **Rate limit**: `static.Serve` runs before `GlobalWebRateLimit`, because one dashboard load pulls dozens of chunks and used to trip 429 / `ChunkLoadError` on a normal reload. |
+| `02-web-cache-ratelimit` | Dashboard cache fix: only content-hashed `/static/*` gets a long `max-age`; `index.html` and SPA fallbacks get `no-store`, so a browser never keeps HTML pointing at a previous build's chunks. The rate-limit half became redundant in rc.51, where `GlobalWebRateLimit` scores asset requests against a separate static budget. |
 | `03-docker-mirror` | Build-time only: points the base images and the package managers at China mirrors (`docker.m.daocloud.io`, npmmirror, goproxy.cn) and writes `VERSION`. Does not change the produced image — CI skips it and passes `BASE_REGISTRY=` empty instead. |
+| `04-systemone-relay` | The TypeSafe Jev decision model at `POST /v1/systemone`. Jev's shape (`{model, state, questions}` in, `{model, answers, usage}` out) has no chat equivalent, so the request body is forwarded byte-identically (unknown fields survive) and the answer is written back unchanged. Adds `RelayFormatSystemOne`, a DTO that keeps the raw body, a relay handler, and input-token-only billing from `usage.input_tokens` (output tokens are free). Channel selection needed no change: it already reads the top-level `model`. |
 
-CI applies `01` and `02` only; `03` exists for local builds on a China host.
+CI applies every patch except `03`, which exists for local builds on a China host.
 
 ## Branches
 
@@ -33,17 +34,17 @@ Everything lives in this one fork:
 | Branch | Purpose |
 |---|---|
 | `main` | Upstream mirror + `.github/workflows/build-image.yml`. GitHub only lists workflows from the default branch, so this is what gives the Actions tab its "Run workflow" button. |
-| `deploy/rc.41` | The tree CI compiles: upstream tag + `01` + `02` + `VERSION` + `deploy/Dockerfile`. Generated — do not edit by hand. |
+| `deploy/rc.51` | The tree CI compiles: upstream tag + `01` + `02` + `VERSION` + `deploy/Dockerfile`. Generated — do not edit by hand. |
 | `deploy-tooling` | This branch: patches, build script, compose stack, docs. |
 
 ## Build
 
 **GitHub Actions (the default).** Actions → *Build patched image* → Run
-workflow, with the defaults. It builds the frontend (Bun 1.4.0) and backend
-(Go 1.26.1), packages the runtime image and pushes it:
+workflow, with the defaults. It builds the frontend (Bun 1.4.4) and backend
+(Go 1.26.10), packages the runtime image and pushes it:
 
 ```
-ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+ghcr.io/bloodarea/new-api:v1.0.0-rc.51
 ghcr.io/bloodarea/new-api:latest
 ```
 
@@ -67,7 +68,7 @@ it aborts when the machine is below these minimums:
 | RAM | 8 GB available (16 GB total) | `go build` peaks at several GB; below this the host swaps and stalls |
 | Disk | 20 GB free | node_modules ~1.5 GB, Go module cache ~3 GB, build cache ~2 GB, image ~1 GB |
 | Host | a development machine | never a host that runs the stack |
-| Tools | Go 1.26.x, Bun 1.4.0, Docker | the versions CI uses |
+| Tools | Go 1.26.10, Bun 1.4.4, Docker | the versions CI uses |
 
 If a local build is genuinely needed and the machine meets all of that:
 
@@ -85,8 +86,8 @@ then `PATH`. Caches go to `cache/`, never `$HOME`.
 git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
 cd new-api-deploy
 
-docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
-docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.51
+docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.51 new-api-local:local
 
 cd deploy
 cp ../.env.example ../.env      # fill in the secrets
@@ -110,7 +111,7 @@ FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
 # 3. Actions -> Build patched image -> Run workflow
 ```
 
-`fork-branch.sh` resets `main` and `deploy/rc.41` in the clone it points at, so
+`fork-branch.sh` resets `main` and `deploy/rc.51` in the clone it points at, so
 give it a clean clone of the fork.
 
 Upgrading upstream: bump `UPSTREAM_TAG` (in `build.sh` and in the script), rebase

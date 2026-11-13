@@ -1,5 +1,5 @@
 diff --git a/middleware/cache.go b/middleware/cache.go
-index 1a9dff8..9267eb6 100644
+index 1a9dff877..9267eb6f1 100644
 --- a/middleware/cache.go
 +++ b/middleware/cache.go
 @@ -1,15 +1,27 @@
@@ -33,31 +33,3 @@ index 1a9dff8..9267eb6 100644
  		}
  		c.Header("Cache-Version", "b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14")
  		c.Next()
-diff --git a/router/web-router.go b/router/web-router.go
-index 7f814da..4032b32 100644
---- a/router/web-router.go
-+++ b/router/web-router.go
-@@ -27,15 +27,21 @@ func SetWebRouter(router *gin.Engine, assets WebAssets, pluginDispatcher gin.Han
- 		middleware.RouteTag("web"),
- 		gzip.Gzip(gzip.DefaultCompression),
- 		middleware.AccessTokenAudit(),
--		middleware.GlobalWebRateLimit(),
- 		middleware.Cache(),
-+		// Serve content-hashed build assets BEFORE the web rate limiter: a single
-+		// dashboard load requests dozens of chunks, and counting them against the
-+		// per-IP budget makes a normal reload trip 429/ChunkLoadError. static.Serve
-+		// ends the request for a real file and falls through to the limiter + SPA
-+		// fallback only for non-asset paths.
- 		static.Serve("/", frontendFS),
-+		middleware.GlobalWebRateLimit(),
- 		func(c *gin.Context) {
- 			if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
- 				controller.RelayNotFound(c)
- 				return
- 			}
--			c.Header("Cache-Control", "no-cache")
-+			c.Header("Cache-Control", "no-store")
-+			c.Header("Pragma", "no-cache")
- 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.IndexPage)
- 		},
- 	)

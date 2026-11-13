@@ -26,7 +26,7 @@ CACHE="$ROOT/cache"
 IMAGE="${IMAGE:-new-api-local:local}"
 
 # Upstream version this repo tracks. Must match patches/ base.
-UPSTREAM_TAG="${UPSTREAM_TAG:-v1.0.0-rc.41}"
+UPSTREAM_TAG="${UPSTREAM_TAG:-v1.0.0-rc.51}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/QuantumNous/new-api.git}"
 
 # --- local build gate ---

@@ -1,0 +1,370 @@
+diff --git a/controller/relay.go b/controller/relay.go
+index 88660c2d8..f9b7c3ee8 100644
+--- a/controller/relay.go
++++ b/controller/relay.go
+@@ -239,6 +239,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+ 			newAPIError = relay.ClaudeHelper(c, relayInfo)
+ 		case types.RelayFormatGemini:
+ 			newAPIError = geminiRelayHandler(c, relayInfo)
++		case types.RelayFormatSystemOne:
++			newAPIError = relay.SystemOneHelper(c, relayInfo)
+ 		default:
+ 			newAPIError = relayHandler(c, relayInfo)
+ 		}
+diff --git a/relay/common/relay_info.go b/relay/common/relay_info.go
+index c750e7872..98e8ef35f 100644
+--- a/relay/common/relay_info.go
++++ b/relay/common/relay_info.go
+@@ -752,6 +752,9 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
+ 	case types.RelayFormatDeepSeekTools:
+ 		info = genBaseRelayInfo(c, request)
+ 		info.RelayFormat = types.RelayFormatDeepSeekTools
++	case types.RelayFormatSystemOne:
++		info = genBaseRelayInfo(c, request)
++		info.RelayFormat = types.RelayFormatSystemOne
+ 	case types.RelayFormatTask:
+ 		info = genBaseRelayInfo(c, nil)
+ 		info.TaskRelayInfo = &TaskRelayInfo{}
+diff --git a/relay/constant/relay_mode.go b/relay/constant/relay_mode.go
+index f72ed497a..60c8cac18 100644
+--- a/relay/constant/relay_mode.go
++++ b/relay/constant/relay_mode.go
+@@ -52,6 +52,8 @@ const (
+ 
+ 	RelayModeToolsSearch
+ 	RelayModeToolsFetch
++
++	RelayModeSystemOne
+ )
+ 
+ func Path2RelayMode(path string) int {
+@@ -90,6 +92,8 @@ func Path2RelayMode(path string) int {
+ 		relayMode = RelayModeAudioTranslation
+ 	} else if strings.HasPrefix(path, "/v1/rerank") {
+ 		relayMode = RelayModeRerank
++	} else if strings.HasPrefix(path, "/v1/systemone") {
++		relayMode = RelayModeSystemOne
+ 	} else if strings.HasPrefix(path, "/v1/realtime") {
+ 		relayMode = RelayModeRealtime
+ 	} else if strings.HasPrefix(path, "/v1beta/models") || strings.HasPrefix(path, "/v1/models") {
+diff --git a/relay/helper/systemone_request_test.go b/relay/helper/systemone_request_test.go
+new file mode 100644
+index 000000000..1d4d6501e
+--- /dev/null
++++ b/relay/helper/systemone_request_test.go
+@@ -0,0 +1,41 @@
++package helper
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func systemOneTestContext(body string) *gin.Context {
++	c, _ := gin.CreateTestContext(httptest.NewRecorder())
++	c.Request = httptest.NewRequest(http.MethodPost, "/v1/systemone", strings.NewReader(body))
++	c.Request.Header.Set("Content-Type", "application/json")
++	return c
++}
++
++// The decision payload must reach the upstream byte for byte: questions and
++// fields the host does not understand cannot survive a typed conversion, which
++// is why the request keeps the client's JSON.
++func TestSystemOneRequestKeepsRawBody(t *testing.T) {
++	body := `{"model":"jev-latest","state":"判断这段文本","questions":{"intent":{"type":"choice","options":["a","b"]}},"future_field":{"nested":true}}`
++
++	request, err := GetAndValidateSystemOneRequest(systemOneTestContext(body))
++	require.NoError(t, err)
++	assert.Equal(t, "jev-latest", request.Model)
++	assert.Equal(t, body, string(request.RawBody))
++	// The pre-consume estimate counts the judged text, not the question schema.
++	assert.Equal(t, "判断这段文本", request.GetTokenCountMeta().CombineText)
++}
++
++// Channel selection happens before the request reaches the upstream, so a body
++// without a model is rejected locally instead of failing channel lookup.
++func TestSystemOneRequestRequiresModel(t *testing.T) {
++	_, err := GetAndValidateSystemOneRequest(systemOneTestContext(`{"state":"判断这段文本","questions":{}}`))
++	require.Error(t, err)
++	assert.Contains(t, err.Error(), "model is required")
++}
+diff --git a/relay/helper/valid_request.go b/relay/helper/valid_request.go
+index c4f522481..4d9e0b866 100644
+--- a/relay/helper/valid_request.go
++++ b/relay/helper/valid_request.go
+@@ -50,6 +50,8 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
+ 		request, err = GetAndValidateEmbeddingRequest(c, relayMode)
+ 	case types.RelayFormatRerank:
+ 		request, err = GetAndValidateRerankRequest(c)
++	case types.RelayFormatSystemOne:
++		request, err = GetAndValidateSystemOneRequest(c)
+ 	case types.RelayFormatOpenAIAudio:
+ 		request, err = GetAndValidAudioRequest(c, relayMode)
+ 	case types.RelayFormatOpenAIRealtime:
+@@ -194,6 +196,34 @@ func GetAndValidateDeepSeekToolsRequest(c *gin.Context) (*dto.DeepSeekToolsReque
+ 	return request, nil
+ }
+ 
++// GetAndValidateSystemOneRequest keeps the raw body for forwarding: state,
++// questions and any field the decision model gains later stay exactly as the
++// client wrote them. Only the model is required, because channel selection
++// happens before the request reaches the upstream, and the upstream's own
++// verdict on a malformed state or questions must reach the client unchanged.
++func GetAndValidateSystemOneRequest(c *gin.Context) (*dto.SystemOneRequest, error) {
++	request := &dto.SystemOneRequest{}
++	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
++		return nil, err
++	}
++	if request.Model == "" {
++		return nil, errors.New("model is required")
++	}
++	storage, err := common.GetBodyStorage(c)
++	if err != nil {
++		return nil, err
++	}
++	rawBody, err := storage.Bytes()
++	if err != nil {
++		return nil, err
++	}
++	if len(rawBody) == 0 {
++		return nil, errors.New("request body is empty")
++	}
++	request.RawBody = rawBody
++	return request, nil
++}
++
+ func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIResponsesCompactionRequest, error) {
+ 	request := &dto.OpenAIResponsesCompactionRequest{}
+ 	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
+diff --git a/relay/relay_systemone.go b/relay/relay_systemone.go
+new file mode 100644
+index 000000000..15d9cf5da
+--- /dev/null
++++ b/relay/relay_systemone.go
+@@ -0,0 +1,129 @@
++package relay
++
++import (
++	"errors"
++	"fmt"
++	"io"
++	"net/http"
++
++	"github.com/QuantumNous/new-api/common"
++	"github.com/QuantumNous/new-api/logger"
++	relaycommon "github.com/QuantumNous/new-api/relay/common"
++	"github.com/QuantumNous/new-api/relay/helper"
++	"github.com/QuantumNous/new-api/relay/requestplugin"
++	"github.com/QuantumNous/new-api/relaykit/dto"
++	"github.com/QuantumNous/new-api/relaykit/types"
++	"github.com/QuantumNous/new-api/service"
++
++	"github.com/MoeForge/moego/ojson"
++	"github.com/gin-gonic/gin"
++)
++
++// SystemOneHelper relays a TypeSafe Jev decision request. The protocol has no
++// chat shape at all: state and questions travel upstream unchanged and the
++// answers come back exactly as the decision model wrote them, so nothing is
++// converted in either direction. The response's usage block is read only to
++// settle the charge.
++func SystemOneHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
++	info.InitChannelMeta(c)
++
++	request, ok := info.Request.(*dto.SystemOneRequest)
++	if !ok {
++		return types.NewErrorWithStatusCode(fmt.Errorf("invalid request type, expected *dto.SystemOneRequest, got %T", info.Request), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
++	}
++
++	if err := helper.ModelMappedHelper(c, info, request); err != nil {
++		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
++	}
++
++	jsonData := request.RawBody
++	if info.UpstreamModelName != "" && info.UpstreamModelName != info.OriginModelName {
++		// Channel model mapping rewrites the one field the upstream routes on;
++		// every other member of the decision request stays byte-identical.
++		doc := ojson.NewDoc(request.RawBody)
++		if err := relaycommon.SetJSONMember(doc, "", "model", info.UpstreamModelName); err != nil {
++			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++		}
++		jsonData = doc.Bytes()
++	}
++
++	if jsonData, newAPIError = requestplugin.Outbound(c, info, jsonData); newAPIError != nil {
++		return newAPIError
++	}
++	if len(info.ParamOverride) > 0 {
++		var err error
++		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
++		if err != nil {
++			return newAPIErrorFromParamOverride(err)
++		}
++	}
++	if newAPIError = requestplugin.Egress(c, info, jsonData); newAPIError != nil {
++		return newAPIError
++	}
++
++	logger.LogDebug(c, "systemone request body: %s", jsonData)
++	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
++	if err != nil {
++		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
++	}
++	defer closer.Close()
++
++	adaptor := GetAdaptor(info.ApiType)
++	if adaptor == nil {
++		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
++	}
++	adaptor.Init(info)
++
++	resp, err := adaptor.DoRequest(c, info, body)
++	if err != nil {
++		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
++	}
++
++	statusCodeMappingStr := c.GetString("status_code_mapping")
++	httpResp, ok := resp.(*http.Response)
++	if !ok || httpResp == nil {
++		return types.NewOpenAIError(errors.New("invalid http response"), types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
++	}
++	defer httpResp.Body.Close()
++
++	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
++		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
++		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
++		return newAPIError
++	}
++
++	responseBody, err := io.ReadAll(httpResp.Body)
++	if err != nil {
++		return types.NewError(err, types.ErrorCodeReadResponseBodyFailed, types.ErrOptionWithSkipRetry())
++	}
++
++	// The decision payload — answers, probabilities, legend — reaches the
++	// client as the upstream wrote it; only the usage block below is read.
++	if contentType := httpResp.Header.Get("Content-Type"); contentType != "" {
++		c.Writer.Header().Set("Content-Type", contentType)
++	}
++	c.Writer.WriteHeader(httpResp.StatusCode)
++	if _, err := c.Writer.Write(responseBody); err != nil {
++		return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
++	}
++
++	// Jev bills input tokens only: the answers are free. A response without a
++	// readable usage block settles nothing here and leaves the request to the
++	// host's own estimate; a negative count never becomes a negative charge.
++	var usage *dto.Usage
++	var parsed dto.SystemOneResponse
++	if err := common.Unmarshal(responseBody, &parsed); err != nil {
++		logger.LogWarn(c, common.LogText("systemone: unreadable upstream response, no usage to bill: %s", common.LocalLogPreview(err.Error())))
++	} else if parsed.Usage != nil {
++		inputTokens := max(parsed.Usage.InputTokens, 0)
++		if inputTokens != parsed.Usage.InputTokens {
++			logger.LogWarn(c, common.LogText("systemone: upstream reported %d input tokens, billing zero", parsed.Usage.InputTokens))
++		}
++		usage = &dto.Usage{
++			PromptTokens: inputTokens,
++			TotalTokens:  inputTokens,
++		}
++	}
++	service.PostTextConsumeQuota(c, info, usage, nil)
++	return nil
++}
+diff --git a/relaykit/dto/systemone.go b/relaykit/dto/systemone.go
+new file mode 100644
+index 000000000..d9db0efc7
+--- /dev/null
++++ b/relaykit/dto/systemone.go
+@@ -0,0 +1,53 @@
++package dto
++
++import (
++	"encoding/json"
++	"net/http"
++
++	"github.com/QuantumNous/new-api/relaykit/types"
++)
++
++// SystemOneRequest is a TypeSafe Jev decision request. The protocol shares no
++// structure with chat completions: "state" is the text under judgement and
++// "questions" describes what to decide. RawBody keeps the client's JSON so
++// every field — including ones the decision model gains later — reaches it
++// unchanged.
++type SystemOneRequest struct {
++	Model   string          `json:"model"`
++	State   string          `json:"state"`
++	RawBody json.RawMessage `json:"-"`
++}
++
++// SystemOneResponse is the decision model's answer. Only the usage block is
++// read here; "answers" and the rest of the payload reach the client as the
++// upstream sent them.
++type SystemOneResponse struct {
++	Model string          `json:"model"`
++	Usage *SystemOneUsage `json:"usage,omitempty"`
++}
++
++// SystemOneUsage is the decision model's own usage shape. Input tokens are the
++// billed quantity; output tokens are reported for observability only.
++type SystemOneUsage struct {
++	InputTokens  int `json:"input_tokens"`
++	OutputTokens int `json:"output_tokens"`
++}
++
++func (r *SystemOneRequest) IsStream(_ *http.Request) bool {
++	return false
++}
++
++// GetTokenCountMeta estimates the request from the judged text only: the
++// question definitions are a schema, not prompt content.
++func (r *SystemOneRequest) GetTokenCountMeta() *types.TokenCountMeta {
++	return &types.TokenCountMeta{
++		CombineText: r.State,
++		TokenType:   types.TokenTypeTokenizer,
++	}
++}
++
++func (r *SystemOneRequest) SetModelName(modelName string) {
++	if modelName != "" {
++		r.Model = modelName
++	}
++}
+diff --git a/relaykit/types/relay_format.go b/relaykit/types/relay_format.go
+index a3bcb8430..7f71c2155 100644
+--- a/relaykit/types/relay_format.go
++++ b/relaykit/types/relay_format.go
+@@ -15,6 +15,10 @@ const (
+ 	RelayFormatOpenAIRealtime                        = "openai_realtime"
+ 	RelayFormatRerank                                = "rerank"
+ 	RelayFormatEmbedding                             = "embedding"
++	// RelayFormatSystemOne is the TypeSafe Jev decision model: a text under
++	// judgement plus question definitions in, answers out. It is relayed
++	// without protocol conversion.
++	RelayFormatSystemOne = "systemone"
+ 
+ 	RelayFormatTask    = "task"
+ 	RelayFormatMjProxy = "mj_proxy"
+diff --git a/router/relay-router.go b/router/relay-router.go
+index ea907aceb..ac037e52c 100644
+--- a/router/relay-router.go
++++ b/router/relay-router.go
+@@ -152,6 +152,12 @@ func SetRelayRouter(router *gin.Engine) {
+ 			controller.Relay(c, types.RelayFormatRerank)
+ 		})
+ 
++		// TypeSafe Jev decision model. The request and the answer are relayed
++		// unchanged; see relay/relay_systemone.go.
++		httpRouter.POST("/systemone", func(c *gin.Context) {
++			controller.Relay(c, types.RelayFormatSystemOne)
++		})
++
+ 		// gemini relay routes
+ 		httpRouter.POST("/engines/:model/embeddings", func(c *gin.Context) {
+ 			controller.Relay(c, types.RelayFormatGemini)

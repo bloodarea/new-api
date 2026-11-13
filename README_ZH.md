@@ -12,15 +12,16 @@ git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-dep
 
 ## 和上游的差异
 
-基线：`v1.0.0-rc.41`（上游 commit `2035a82`），三个补丁按文件名顺序应用。
+基线：`v1.0.0-rc.51`（上游 commit `c9c6da278`），四个补丁按文件名顺序应用。
 
 | 补丁 | 改了什么 |
 |---|---|
 | `01-channel-site-icon` | 渠道可以带一个网站地址，控制台会去抓该站点的 favicon 并显示在渠道列表里。新增 `GET /api/channel/fetch_icon`（权限 `ChannelOperate`）、渠道设置里的 `SiteURL`/`IconURL`（只存在 settings JSON，不改表结构）、`<link rel="…icon…">` 解析并以 `<origin>/favicon.ico` 兜底、SSRF 防护的 HTTP client，以及抽屉/列表 UI 和一个单元测试。 |
-| `02-web-cache-ratelimit` | 两个控制台问题。**缓存**：只有带内容 hash 的 `/static/*` 才给长 `max-age`，`index.html` 和 SPA 兜底页给 `no-store`，避免浏览器拿旧 HTML 去请求上一版构建的 chunk。**限流**：`static.Serve` 提到 `GlobalWebRateLimit` 之前——一次打开控制台会拉几十个 chunk，算进每 IP 配额后正常刷新就 429 / `ChunkLoadError`。 |
+| `02-web-cache-ratelimit` | 控制台缓存问题：只有带内容 hash 的 `/static/*` 才给长 `max-age`，`index.html` 和 SPA 兜底页给 `no-store`，避免浏览器拿旧 HTML 去请求上一版构建的 chunk。原本还包含「静态资源先于限流器」的改动，rc.51 上游已把静态资源分流到独立预算，这部分在 rebase 时删掉了。 |
 | `03-docker-mirror` | 只影响构建过程：把基础镜像和包管理器指到国内源（`docker.m.daocloud.io`、npmmirror、goproxy.cn），并写 `VERSION`。不改变产物——CI 跳过它，改用 `BASE_REGISTRY=` 空值从 docker.io 拉。 |
+| `04-systemone-relay` | 接入 TypeSafe 的 Jev 决策模型：`POST /v1/systemone`。Jev 的形状（`{model, state, questions}` 进、`{model, answers, usage}` 出）在 chat 协议里没有对应物，所以请求体逐字节转发（未知字段不丢）、答案原样写回。新增 `RelayFormatSystemOne`、保留原始 body 的 DTO、relay handler，以及只按 `usage.input_tokens` 计费（输出免费）。渠道选择不需要改：它本来就读顶层 `model`。 |
 
-CI 只打 `01`、`02`；`03` 是给国内机器本机构建用的。
+CI 打除 `03` 之外的所有补丁；`03` 是给国内机器本机构建用的。
 
 ## 分支
 
@@ -29,15 +30,15 @@ CI 只打 `01`、`02`；`03` 是给国内机器本机构建用的。
 | 分支 | 用途 |
 |---|---|
 | `main` | 上游镜像 + `.github/workflows/build-image.yml`。GitHub 只从默认分支列出 workflow，所以 Actions 页面的「Run workflow」按钮靠它。 |
-| `deploy/rc.41` | CI 实际编译的树：上游 tag + `01` + `02` + `VERSION` + `deploy/Dockerfile`。**生成物，别手改。** |
+| `deploy/rc.51` | CI 实际编译的树：上游 tag + `01` + `02` + `VERSION` + `deploy/Dockerfile`。**生成物，别手改。** |
 | `deploy-tooling` | 当前这个分支：补丁、构建脚本、compose、文档。 |
 
 ## 构建
 
-**GitHub Actions（常规路径）**：Actions → *Build patched image* → Run workflow，参数保持默认。它会用 Bun 1.4.0 编前端、Go 1.26.1 编后端、打包运行时镜像并推送：
+**GitHub Actions（常规路径）**：Actions → *Build patched image* → Run workflow，参数保持默认。它会用 Bun 1.4.4 编前端、Go 1.26.10 编后端、打包运行时镜像并推送：
 
 ```
-ghcr.io/bloodarea/new-api:v1.0.0-rc.41
+ghcr.io/bloodarea/new-api:v1.0.0-rc.51
 ghcr.io/bloodarea/new-api:latest
 ```
 
@@ -55,7 +56,7 @@ ghcr.io/bloodarea/new-api:latest
 | 内存 | 可用 8 GB（总量 16 GB） | `go build` 峰值好几 GB，低于这个会 swap、卡顿 |
 | 磁盘 | 空闲 20 GB | node_modules 约 1.5 GB、Go 模块缓存约 3 GB、编译缓存约 2 GB、镜像约 1 GB |
 | 机器 | 开发机 | **绝不能**是跑着这套服务的机器 |
-| 工具链 | Go 1.26.x、Bun 1.4.0、Docker | 与 CI 一致 |
+| 工具链 | Go 1.26.10、Bun 1.4.4、Docker | 与 CI 一致 |
 
 确实需要本机构建、且机器满足以上条件时才执行：
 
@@ -72,8 +73,8 @@ ALLOW_LOCAL_BUILD=force ./build.sh   # 跳过资源检查
 git clone -b deploy-tooling https://github.com/bloodarea/new-api.git new-api-deploy
 cd new-api-deploy
 
-docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.41
-docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.41 new-api-local:local
+docker pull ghcr.io/bloodarea/new-api:v1.0.0-rc.51
+docker tag  ghcr.io/bloodarea/new-api:v1.0.0-rc.51 new-api-local:local
 
 cd deploy
 cp ../.env.example ../.env      # 填密钥
@@ -93,7 +94,7 @@ FORK_CLONE=~/SourceCodeLibrary/Projects/new-api ./fork-branch.sh
 # 3. Actions -> Build patched image -> Run workflow
 ```
 
-`fork-branch.sh` 会重置它指向的那个克隆里的 `main` 和 `deploy/rc.41`，所以要给一个干净的 fork 克隆。
+`fork-branch.sh` 会重置它指向的那个克隆里的 `main` 和 `deploy/rc.51`，所以要给一个干净的 fork 克隆。
 
 升级上游：改 `UPSTREAM_TAG`（`build.sh` 和脚本里各一处），把不再适用的补丁 rebase 掉，再重新生成。
 
