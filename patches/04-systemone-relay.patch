@@ -144,10 +144,10 @@ index c4f522481..4d9e0b866 100644
  	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
 diff --git a/relay/relay_systemone.go b/relay/relay_systemone.go
 new file mode 100644
-index 000000000..f1e9a26a3
+index 000000000..569298060
 --- /dev/null
 +++ b/relay/relay_systemone.go
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,145 @@
 +package relay
 +
 +import (
@@ -155,6 +155,7 @@ index 000000000..f1e9a26a3
 +	"fmt"
 +	"io"
 +	"net/http"
++	"strings"
 +
 +	"github.com/QuantumNous/new-api/common"
 +	"github.com/QuantumNous/new-api/logger"
@@ -239,9 +240,20 @@ index 000000000..f1e9a26a3
 +	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 +		// The decision model's own rejection — an unknown question type, a
 +		// missing criteria map, a quota stop — is what the caller has to act
-+		// on, so its body travels inside the error message instead of a bare
-+		// status code. The status itself is preserved below.
-+		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, true)
++		// on. Its body is not an OpenAI error envelope, so RelayErrorHandler
++		// would reduce it to a bare status code; carry the body itself as the
++		// message and keep the upstream status.
++		upstreamBody, readErr := io.ReadAll(httpResp.Body)
++		service.CloseResponseBodyGracefully(httpResp)
++		if readErr != nil {
++			return types.NewError(readErr, types.ErrorCodeReadResponseBodyFailed, types.ErrOptionWithSkipRetry())
++		}
++		detail := strings.TrimSpace(string(upstreamBody))
++		if detail == "" {
++			detail = fmt.Sprintf("upstream rejected the decision request with status %d", httpResp.StatusCode)
++		}
++		logger.LogError(c, common.LogText("systemone upstream rejected the request: %s", common.LocalLogPreview(detail)))
++		newAPIError = types.NewOpenAIError(errors.New(detail), types.ErrorCodeBadResponseStatusCode, httpResp.StatusCode)
 +		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 +		return newAPIError
 +	}
