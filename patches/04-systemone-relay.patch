@@ -144,10 +144,10 @@ index c4f522481..4d9e0b866 100644
  	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
 diff --git a/relay/relay_systemone.go b/relay/relay_systemone.go
 new file mode 100644
-index 000000000..15d9cf5da
+index 000000000..f1e9a26a3
 --- /dev/null
 +++ b/relay/relay_systemone.go
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,133 @@
 +package relay
 +
 +import (
@@ -237,7 +237,11 @@ index 000000000..15d9cf5da
 +	defer httpResp.Body.Close()
 +
 +	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-+		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
++		// The decision model's own rejection — an unknown question type, a
++		// missing criteria map, a quota stop — is what the caller has to act
++		// on, so its body travels inside the error message instead of a bare
++		// status code. The status itself is preserved below.
++		newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, true)
 +		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 +		return newAPIError
 +	}
