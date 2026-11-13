@@ -116,6 +116,11 @@ export interface ChannelSettings {
   request_plugins?: string[]
   force_format?: boolean
   thinking_to_content?: boolean
+  // Channel website, shown as a clickable link in the channel list.
+  site_url?: string
+  // Optional custom icon (image URL) shown for this channel instead of the
+  // default channel-type logo. Normally the favicon resolved from site_url.
+  icon_url?: string
   proxy?: string
   pass_through_body_enabled?: boolean
   responses_websocket_enabled?: boolean

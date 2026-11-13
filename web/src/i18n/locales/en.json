@@ -7750,6 +7750,14 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "By clicking sign in, you agree to our": "By clicking sign in, you agree to our",
-    "By creating an account, you agree to our": "By creating an account, you agree to our"
+    "By creating an account, you agree to our": "By creating an account, you agree to our",
+    "Channel URL": "Channel URL",
+    "Channel Icon": "Channel Icon",
+    "Fetch Icon": "Fetch Icon",
+    "Enter a website or Base URL first": "Enter a website or Base URL first",
+    "Failed to fetch icon": "Failed to fetch icon",
+    "Icon fetched": "Icon fetched",
+    "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.": "Channel website, shown as a clickable link in the channel list. The icon below is fetched from this URL.",
+    "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon.": "Image used as the channel icon in the list. Filled automatically by Fetch Icon; you can also paste any image URL. Leave empty to use the default type icon."
   }
 }

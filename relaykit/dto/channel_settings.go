@@ -39,6 +39,14 @@ type ChannelSettings struct {
 	// RequestPlugins lists the request plugin instances the channel binds,
 	// by instance id, in run order.
 	RequestPlugins []string `json:"request_plugins,omitempty"`
+	// SiteURL is the channel's public website, shown as a clickable link in the
+	// dashboard channel list.
+	SiteURL string `json:"site_url,omitempty"`
+	// IconURL is an optional custom icon shown for this channel in the
+	// dashboard, replacing the default channel-type logo. It is normally the
+	// favicon resolved from SiteURL via the fetch-icon endpoint, but a direct
+	// image URL works too.
+	IconURL string `json:"icon_url,omitempty"`
 }
 
 // BindsTaskPlugin reports whether the channel is bound to the task plugin,

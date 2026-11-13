@@ -15,6 +15,10 @@ const (
 	RelayFormatOpenAIRealtime                        = "openai_realtime"
 	RelayFormatRerank                                = "rerank"
 	RelayFormatEmbedding                             = "embedding"
+	// RelayFormatSystemOne is the TypeSafe Jev decision model: a text under
+	// judgement plus question definitions in, answers out. It is relayed
+	// without protocol conversion.
+	RelayFormatSystemOne = "systemone"
 
 	RelayFormatTask    = "task"
 	RelayFormatMjProxy = "mj_proxy"

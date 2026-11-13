@@ -239,6 +239,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = relay.ClaudeHelper(c, relayInfo)
 		case types.RelayFormatGemini:
 			newAPIError = geminiRelayHandler(c, relayInfo)
+		case types.RelayFormatSystemOne:
+			newAPIError = relay.SystemOneHelper(c, relayInfo)
 		default:
 			newAPIError = relayHandler(c, relayInfo)
 		}

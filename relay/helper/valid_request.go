@@ -50,6 +50,8 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 		request, err = GetAndValidateEmbeddingRequest(c, relayMode)
 	case types.RelayFormatRerank:
 		request, err = GetAndValidateRerankRequest(c)
+	case types.RelayFormatSystemOne:
+		request, err = GetAndValidateSystemOneRequest(c)
 	case types.RelayFormatOpenAIAudio:
 		request, err = GetAndValidAudioRequest(c, relayMode)
 	case types.RelayFormatOpenAIRealtime:
@@ -178,6 +180,34 @@ func GetAndValidateDeepSeekToolsRequest(c *gin.Context) (*dto.DeepSeekToolsReque
 	request := &dto.DeepSeekToolsRequest{}
 	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
 		return nil, err
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, err
+	}
+	rawBody, err := storage.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	if len(rawBody) == 0 {
+		return nil, errors.New("request body is empty")
+	}
+	request.RawBody = rawBody
+	return request, nil
+}
+
+// GetAndValidateSystemOneRequest keeps the raw body for forwarding: state,
+// questions and any field the decision model gains later stay exactly as the
+// client wrote them. Only the model is required, because channel selection
+// happens before the request reaches the upstream, and the upstream's own
+// verdict on a malformed state or questions must reach the client unchanged.
+func GetAndValidateSystemOneRequest(c *gin.Context) (*dto.SystemOneRequest, error) {
+	request := &dto.SystemOneRequest{}
+	if err := common.UnmarshalBodyReusableNoCopy(c, request); err != nil {
+		return nil, err
+	}
+	if request.Model == "" {
+		return nil, errors.New("model is required")
 	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
